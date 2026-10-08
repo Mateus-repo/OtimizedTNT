@@ -7,7 +7,8 @@ version = mod_version
 group = mod_group
 
 base {
-    archivesName = "${mod_id}-${version}"
+    // o Gradle acrescenta a versão → optimizedtnt-1.0.0.jar
+    archivesName = mod_id
 }
 
 java {
