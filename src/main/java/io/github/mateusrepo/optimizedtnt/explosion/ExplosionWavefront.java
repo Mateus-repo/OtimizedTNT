@@ -57,9 +57,9 @@ public final class ExplosionWavefront {
     /**
      * Calcula os blocos afetados.
      *
-     * @return quantidade de blocos registados
+     * @return resultado com a quantidade de blocos registados e de processamentos da fila
      */
-    public static int compute(ExplosionParams params, BlockProbe probe, ExplosionSink sink) {
+    public static Result compute(ExplosionParams params, BlockProbe probe, ExplosionSink sink) {
         Neighborhood hood = params.neighborhood();
         float factor = params.resistanceFactor();
         float axisCap = params.energyFor(Neighborhood.AXIS);
@@ -78,7 +78,7 @@ public final class ExplosionWavefront {
         // ~3.3 amostras para o atravessar); só o registo usa a primeira amostra.
         float centerResistance = ws.resistance(probe, center, centerX, centerY, centerZ);
         if (centerResistance == OUT_OF_BOUNDS) {
-            return 0;
+            return new Result(0, 0);
         }
         float centerEnergy = axisCap - charge(centerResistance, 1.0F, factor);
         ws.distances.put(center, centerEnergy);
@@ -172,7 +172,23 @@ public final class ExplosionWavefront {
                 }
             }
         }
-        return accepted;
+        return new Result(accepted, ws.processed);
+    }
+
+    /**
+     * Resultado de uma explosão.
+     *
+     * @param blocks     blocos registados (o que o vanilla devolveria num {@code Set})
+     * @param processed  nós que saíram da fila. Com a ordem correcta do Dijkstra é igual a
+     *                   {@code blocks} mais os nós que não puderam propagar; muito acima
+     *                   disso significa que a fila está a extrair pela ordem errada.
+     */
+    public record Result(int blocks, int processed) {
+
+        /** Processamentos por bloco registado. 1,0 é o ideal. */
+        public float churn() {
+            return blocks == 0 ? 0.0F : processed / (float) blocks;
+        }
     }
 
     /** Custo de resistência ao atravessar {@code length} de um bloco com resistência dada. */
@@ -221,6 +237,8 @@ public final class ExplosionWavefront {
         float[] energies = new float[INITIAL_CAPACITY];
         float[] slacks = new float[INITIAL_CAPACITY];
         int size;
+        /** Nós que saíram da fila nesta explosão (inclui entradas obsoletas). */
+        int processed;
 
         long position;
         float energy;
@@ -233,6 +251,7 @@ public final class ExplosionWavefront {
 
         void begin() {
             size = 0;
+            processed = 0;
             distances.nextGeneration();
             resistances.nextGeneration();
             emitted.nextGeneration();
@@ -273,6 +292,7 @@ public final class ExplosionWavefront {
         }
 
         void pop() {
+            processed++;
             position = positions[0];
             energy = energies[0];
             slack = slacks[0];
@@ -286,9 +306,13 @@ public final class ExplosionWavefront {
         }
 
         private void siftUp(int index) {
+            // MAX-heap pela energia: o Dijkstra tem de extrair o nó com mais energia
+            // restante, porque é o que decide até onde a onda chega. Um min-heap extrai o
+            // pior primeiro, e esse nó acaba por ser melhorado e processado outra vez — o
+            // mesmo bloco várias vezes, com 26 relaxamentos por cada vez.
             while (index > 0) {
                 int parent = (index - 1) >>> 1;
-                if (energies[parent] <= energies[index]) {
+                if (energies[parent] >= energies[index]) {
                     break;
                 }
                 swap(parent, index);
@@ -300,18 +324,18 @@ public final class ExplosionWavefront {
             while (true) {
                 int left = index * 2 + 1;
                 int right = left + 1;
-                int smallest = index;
-                if (left < size && energies[left] < energies[smallest]) {
-                    smallest = left;
+                int largest = index;
+                if (left < size && energies[left] > energies[largest]) {
+                    largest = left;
                 }
-                if (right < size && energies[right] < energies[smallest]) {
-                    smallest = right;
+                if (right < size && energies[right] > energies[largest]) {
+                    largest = right;
                 }
-                if (smallest == index) {
+                if (largest == index) {
                     return;
                 }
-                swap(smallest, index);
-                index = smallest;
+                swap(largest, index);
+                index = largest;
             }
         }
 

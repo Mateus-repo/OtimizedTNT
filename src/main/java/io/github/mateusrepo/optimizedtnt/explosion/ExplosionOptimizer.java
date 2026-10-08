@@ -64,7 +64,7 @@ public final class ExplosionOptimizer {
         if (config.getAlgorithm() == OptimizedTntConfig.Algorithm.RAY_CACHE) {
             blocks = ExplosionRayCache.forEach(params, probe, floats, packed -> result.add(toBlockPos(packed)));
         } else {
-            blocks = ExplosionWavefront.compute(params, probe, packed -> result.add(toBlockPos(packed)));
+            blocks = ExplosionWavefront.compute(params, probe, packed -> result.add(toBlockPos(packed))).blocks();
         }
 
         if (measure) {
