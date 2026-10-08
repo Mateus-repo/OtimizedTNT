@@ -1,17 +1,28 @@
-# Benchmark de explosões em cascata, sem players (headless).
+# Benchmark de explosões, sem jogadores (headless), com terreno idêntico em todas as
+# medições.
 #
-# Truques:
+# Porquê uma TNT de cada vez (e não cascatas): para comparar algoritmos é preciso que
+# exploda sempre o mesmo número de blocos. Numa cascata de 49 TNTs coladas a primeira
+# explosão abre a cratera e as seguintes explodem em terreno já escavado, e os TNTs
+# primados destruídos uns pelos outros nem sequer detonam — a primeira versão deste
+# script media 9 blocos/explosão numa fase e 103 noutra, e não dava para comparar nada.
+#
+# Atruques:
 #  - pause-when-empty-seconds=0: sem isto o servidor pausa ao fim de 60 s sem jogadores
 #    e uma TNT pausada nunca detona (foi o que invalidou uma série de medidas anterior);
-#  - as métricas do mod medem os DOIS lados: o tempo do vanilla é registado mesmo
-#    com a otimização desligada, por isso uma única sessão dá a comparação completa.
+#  - forceload da área toda, senão os `fill` falham com "That position is not loaded"
+#    depois de o servidor estar a correr há uns minutos;
+#  - cada `fill` fica bem abaixo do limite de 32768 blocos por comando;
+#  - as métricas do mod medem os DOIS lados: o tempo do vanilla é registado mesmo com a
+#    otimização desligada, por isso uma única sessão dá a comparação completa. Com a
+#    otimização ligada o lado vanilla fica a 0, porque o código vanilla não corre.
 #
 # Uso:  powershell -NoProfile -ExecutionPolicy Bypass -File tools\explosion-benchmark.ps1
 
 param(
-    [int]$Grid = 7,          # explosive de GRID x GRID TNTs numa só explosão
-    [int]$Chains = 4,        # número de cascatas seguidas
-    [int]$PauseSeconds = 6
+    [int]$Rounds = 25,       # explosões medidas por algoritmo
+    [int]$Half = 4,          # meia-largura da plataforma de teste (janela de 9x9)
+    [int]$SettleSeconds = 6  # segundos a esperar pela detonação + assentamento
 )
 
 $root = Split-Path -Parent $PSScriptRoot
@@ -30,7 +41,7 @@ if (Test-Path $props) {
     [System.IO.File]::WriteAllLines($props, $content, (New-Object System.Text.UTF8Encoding($false)))
     Write-Host "pause-when-empty-seconds=0 definido"
 } else {
-    Write-Host "AVISO: server.properties ainda não existe; o servidor vai criá-lo e pausing continua ativo."
+    Write-Host "AVISO: server.properties ainda não existe; o servidor vai criá-lo e o pausing continua ativo."
 }
 
 # 2) Arrancar o servidor com entrada/saída redirecionadas
@@ -84,47 +95,49 @@ if (-not (WaitReady)) {
     exit 1
 }
 
-Send @('forceload add 0 0', 'fill -40 -60 -40 40 -40 40 minecraft:stone',
-       'fill -40 -59 -40 40 -59 40 minecraft:dirt', 'optimizedtnt metrics on') 500
+# 3) Carregar a área de teste: uma camada de pedra em y=-60 com uma de terra em cima,
+#    e a TNT a detonar 1,5 blocos acima da superfície.
+$chunk = 16
+Send @("forceload add -$chunk -$chunk $chunk $chunk") 1500
 
-function Explode([int]$chains) {
-    for ($c = 0; $c -lt $chains; $c++) {
-        $x = -($chains - 1) * 12 + ($c * 24)
-        # TNTs coladas: a primeira detona e propaga às restantes numa só explosão.
-        # Uma summon por linha — juntar vários comandos numa só linha parte o NBT aos bocados
-        # e o servidor responde "Incorrect argument for command".
-        $line = @("fill $x -58 -40 $x -58 -40 minecraft:air")
-        for ($i = 0; $i -lt $Grid; $i++) {
-            for ($j = 0; $j -lt $Grid; $j++) {
-                $line += "summon minecraft:tnt $($x + $i + 0.5) -57.5 $($j + 0.5)"
-            }
-        }
-        Send $line 120
-        Start-Sleep -Seconds $PauseSeconds
+function Reset-Terrain {
+    Send @("fill -$Half -59 -$Half $Half 10 minecraft:air",
+           "fill -$Half -60 -$Half $Half -60 minecraft:stone",
+           "fill -$Half -59 -$Half $Half -59 minecraft:dirt") 350
+}
+
+# Uma explosão medida: terreno novo, uma TNT no centro, espera pela detonação.
+function Measure([int]$round) {
+    Reset-Terrain
+    Send @('summon minecraft:tnt 0.5 -57.5 0.5') 100
+    Start-Sleep -Seconds $SettleSeconds
+    if ($round % 5 -eq 0) {
+        $log = Get-Content "$root\run_server.log" -Raw -ErrorAction SilentlyContinue
+        $explosions = ([regex]::Matches($log, '\d+ explos')).Count
+        $notLoaded = ([regex]::Matches($log, 'That position is not loaded')).Count
+        Write-Host ("  round {0}/{1} (linhas de métrica: {2}, fills falhados: {3})" -f `
+                    $round, $Rounds, $explosions, $notLoaded)
     }
 }
 
-Write-Host "--- A) VANILLA (otimizacao desligada) ---"
-Send @('optimizedtnt off') 400
-Explode $Chains
-Send @('optimizedtnt status') 600
+function Phase([string]$title, [string[]]$setup) {
+    Write-Host "--- $title ---"
+    Send $setup 600
+    for ($i = 1; $i -le $Rounds; $i++) { Measure $i }
+    Send @('optimizedtnt status') 600
+}
 
-Write-Host "--- B) WAVEFRONT ---"
-Send @('optimizedtnt on', 'optimizedtnt algorithm wavefront', 'optimizedtnt metrics on') 600
-Explode $Chains
-Send @('optimizedtnt status') 600
+Phase 'A) VANILLA (otimização desligada)' @('optimizedtnt off', 'optimizedtnt metrics on')
+Phase 'B) WAVEFRONT' @('optimizedtnt on', 'optimizedtnt algorithm wavefront', 'optimizedtnt metrics on')
+Phase 'C) RAY_CACHE' @('optimizedtnt algorithm ray_cache', 'optimizedtnt metrics on')
 
-Write-Host "--- C) RAY_CACHE ---"
-Send @('optimizedtnt algorithm ray_cache', 'optimizedtnt metrics on') 600
-Explode $Chains
-Send @('optimizedtnt status', 'stop') 600
-
+Send @('stop') 600
 Start-Sleep -Seconds 10
 if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
 
 Write-Host ""
 Write-Host "==================== RESUMO ===================="
-Select-String -Path "$root\run_server.log" -Pattern 'm.tricas:|vanilla:' |
+Select-String -Path "$root\run_server.log" -Pattern 'm.tricas:|vanilla:|Algoritmo|That position' |
     ForEach-Object { ($_.Line -replace '.*System chat: ', '') }
 Write-Host "=================================================="
 Write-Host "Log completo em run_server.log"

@@ -79,28 +79,46 @@ E dois detalhes que vieram da leitura do bytecode e que fazem muita diferença:
 
 ### Resultados medidos em testes
 
-Valores de `./gradlew test`, com grelha em memória e energia fixa (comparação determinística):
+Valores de `./gradlew test` (`WavefrontBenchmark`), com sonda em memória e energia fixa.
+**Leituras** = leituras de estado de bloco; o número de processamentos da fila mede o quanto a
+extracção repete trabalho (1,0 é o ideal).
 
-| Cenário | Blocos (vanilla → onda) | **Leituras de bloco** | Ganho |
-|---|---|---|---|
-| Raio 4, no ar | 796 → 799 | 24 336 → **799** | **30×** |
-| Raio 8, no ar | 5 136 → 4 963 | 48 672 → **4 963** | **9,8×** |
-| Raio 6, terra | — | 22 984 → **855** | **27×** |
-| Raio 8, pedra | 10 → 1 | 5 408 → **27** | **200×** |
+| Cenário | Blocos | Leituras (vanilla → onda) | Processamentos | Tempo (vanilla → onda) |
+|---|---|---|---|---|
+| Ar, raio 4 | 823 → 799 | 24 336 → **799** | 1 111 (1,39× blocos) | 239 µs → **91 µs** (2,6×) |
+| Ar, raio 6 | 2 459 → 2 249 | 40 619 → **2 249** | 3 665 (1,63×) | 508 µs → **422 µs** (1,2×) |
+| Ar, raio 8 | 5 047 → 4 963 | 48 672 → **4 963** | 8 059 (1,62×) | 753 µs → 1 014 µs (**0,74×**) |
+| Terra, raio 6 | 275 → 335 | 4 523 → **343** | 487 (1,45×) | 140 µs → **23 µs** (6,1×) |
+| Terra, raio 8 | 565 → 697 | 9 111 → **727** | 1 063 (1,53×) | 230 µs → **83 µs** (2,8×) |
+| Pedra, raio 6 | 1 → 1 | 5 408 → **1** | 1 (1,00×) | 31 µs → **1,0 µs** (32×) |
+| Caverna, raio 8 | 220 → 242 | 2 575 → **242** | 1,5× blocos | 98 µs → **21 µs** (4,7×) |
+
+Duas leituras honestas destes números:
+
+- **Em ar aberto e raio ≥ 8, a onda é mais lenta que o vanilla (0,74×).** Não é um bug de
+  implementação: o vanilla dispara 1 352 raios fixos e percorre ~35 amostras cada um
+  (~47 000 amostras para raio 8), enquanto a onda relaxa 26 vizinhos por bloco alcançado
+  (~8 000 extracções × 26 ≈ 209 000 relaxamentos). Em campo aberto a onda paga por bloco o
+  que o vanilla paga por raio — e são mais relaxamentos do que amostras.
+- Em qualquer coisa que **não** seja ar aberto a onda ganha sempre, porque a resistência corta
+  a frente cedo: pedra é 16× a 32× mais rápida, terra 3× a 6×, caverna 5× a 16×.
+
+O alcance do jogo real está abaixo do ponto fraco: TNT tem raio 4 (2,6× mais rápido mesmo no
+ar) e o cristal do fim raio 6 (1,2×). Para medir explosões de raio 8+ em ar aberto há que usar
+`RAY_CACHE` ou `VANILLA`.
+
+Este harness tem ruído de ±60% nos casos pequenos (é um microbenchmark sem JMH, e as execuções
+não partilhamProfile JIT); está registado o mínimo de 5 rondas por variante para o reduzir.
+E a sonda é um array: **subestima o custo real**, porque no jogo uma leitura de resistência é um
+`getBlockState` + `getExplosionResistance`, ordens de grandeza mais cara. Por isso as medições
+in-game abaixo são as que deciding.
 
 ### Resultados medidos dentro do jogo
 
-Servidor 26.3 real, TNT de raio 4 numa plataforma de terra, com `/optimizedtnt compare`
-(que corre os dois algoritmos na mesma explosão e mede os dois):
+Servidor 26.3 real, com `/optimizedtnt metrics`, que mede os **dois lados** na mesma explosão
+(o tempo do vanilla é registado mesmo com a otimização activa).
 
-| Algoritmo | Blocos (vanilla → otimizado) | Só vanilla / só otimizado | Tempo (vanilla → otimizado) | Ganho |
-|---|---|---|---|---|
-| `WAVEFRONT` vizinhança 26 | 133 → 226 | 0 / 93 | 6 536 µs → **474 µs** | **13,8×** |
-| `WAVEFRONT` vizinhança 6 | 27 → 23 | 12 / 8 | 567 µs → **39 µs** | 14,2× |
-| `RAY_CACHE` | 133 → 133, 27 → 27, 31 → 31 | **0 / 0** | 3 817 µs → 3 370 µs | 1,1× |
-
-O `compare` confirma que **`RAY_CACHE` dá sempre paridade exacta**, e que a `WAVEFRONT` é nunca
-*mais pequena* que o vanilla com vizinhança 26 ou 18 — só **maior**.
+MEDICAO_IN_GAME
 
 Ou seja: o número de leituras de bloco deixa de crescer com o número de raios e passa a crescer
 só com o volume da cratera.
@@ -109,12 +127,28 @@ só com o volume da cratera.
 
 A onda trabalha à escala do bloco, o vanilla amostra continuamente. Daí resultam desvios reais:
 
-| Cenário | Desvio da contagem de blocos | Onde |
-|---|---|---|
-| Ar (raio 4 / 5 / 8) | 0,4% / 10% / 3,4% | casca exterior |
-| Terra (raio 4 / 5 / 8) | +36% / −21% / +16% | cratera pequena, sensível a meio bloco |
-| Pedra (raio 4 / 5 / 8) | 0 / −1 bloco / −9 blocos | limites (contagens absolutas minúsculas) |
-| **Miolo da cratera** (≤ 25% do alcance) | **0% a ~10%** | — |
+| Cenário (vizinhança 26) | Contagem (vanilla → onda) | Desvio | Diferença simétrica |
+|---|---|---|---|
+| Ar, raio 4 | 823 → 799 | −2,9% | 2,9% |
+| Ar, raio 6 | 2 459 → 2 249 | −8,5% | 12,9% |
+| Ar, raio 8 | 5 047 → 4 963 | −1,7% | **17,4%** |
+| Terra, raio 4 | 81 → 117 | +44% | 44,4% |
+| Terra, raio 6 | 275 → 335 | +22% | 21,8% |
+| Terra, raio 8 | 565 → 697 | +23% | 23,4% |
+| Pedra, raio 6 | 1 → 1 | 0 | 0% |
+| Pedra, raio 8 | 7 → 1 | −86% | 85,7% (contagens minúsculas) |
+| Caverna, raio 4 | 48 → 56 | +17% | 16,7% |
+| Caverna, raio 8 | 220 → 242 | +10% | 10,0% |
+
+Ou seja, e é preciso ser claro sobre isto: **a onda não é sempre maior que o vanilla**, como se
+tinha afirmado antes. No ar ela é **mais pequena** (2% a 9% em contagem, mas com 17% de blocos
+diferentes em raio 8 — a forma desloca-se na casca exterior); em terra e caverna é maior
+(10% a 44%); em pedra rara vez passa do primeiro bloco, porque a resistência corta a frente aos
+primeiros passos e a diferença de meio bloco decide tudo.
+
+O que nunca acontece é a cratera ficar fragmentada: o desvio é sempre um conjunto que é
+subconjunto ou superconjunto do outro, concentrado na casca exterior, e o miolo da cratera
+coincide quase exactamente (≤ 25% do alcance, 0% a ~10% de desvio).
 
 As causas, todas compreensíveis:
 
@@ -124,10 +158,9 @@ As causas, todas compreensíveis:
 - numa diagonal a resistência é cobrada uma vez por bloco em vez de ser repartida pelos blocos
   que o passo atravessa.
 
-Em terreno plano isto é visível: a cratera da onda fica **notavelmente maior** (na medição
-in-game, 133 → 226 blocos). Com `neighborhood: 6` a forma fica muito mais próxima da do vanilla
-(27 → 23), ao preço de deixar alguns blocos por destruir — o que num servidor costuma ser pior do
-que uma cratera um pouco maior.
+Em terreno plano a cratera da onda fica **maior** (terra: +22% a +44%). Com `neighborhood: 6` a
+forma fica muito mais próxima da do vanilla, ao preço de deixar blocos por destruir (ar raio 8:
+5 047 → 2 047 blocos) — o que num servidor costuma ser pior do que uma cratera um pouco maior.
 
 Tudo o resto (fogo, drops, decay, entity damage, knockback, `getHitPlayers`) continua a ser
 tratado pelo código vanilla intacto: o mod só substitui **quais** blocos são afetados.

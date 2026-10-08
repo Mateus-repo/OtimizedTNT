@@ -214,21 +214,40 @@ Outras confirmações relevantes:
 
 ### 5.1 Testes (`./gradlew test`)
 
-Grelha em memória, energia fixa (mesma nos dois lados), apenas blocos cheios de um meio.
+Sonda densa em memória, energia fixa (mesma nos dois lados). `churn` = extracções da fila por
+bloco registado (1,0 é o Dijkstra perfeito). Tempos em ns/explusão, **mínimo de 5 rondas** por
+variante depois de aquecer cada uma (a média dava números contraditórios entre execuções).
 
-| Cenário | Blocos vanilla → onda | Leituras vanilla → onda | Ganho |
-|---|---|---|---|
-| Raio 4, ar | 796 → 799 | 24 336 → 799 | **30×** |
-| Raio 5, ar | 1 518 → 1 359 | 31 096 → 1 359 | **23×** |
-| Raio 8, ar | 5 136 → 4 963 | 48 672 → 4 963 | **9,8×** |
-| Raio 6, terra | — | 22 984 → 855 | **27×** |
-| Raio 8, pedra | 10 → 1 | 5 408 → 27 | **200×** |
+| Cenário (vizinhança 26) | Blocos vanilla → onda | Leituras vanilla → onda | churn | Tempo vanilla → onda |
+|---|---|---|---|---|
+| Ar, raio 4 | 823 → 799 | 24 336 → **799** | 1,39 | 239 k → **91 k** (2,6×) |
+| Ar, raio 6 | 2 459 → 2 249 | 40 619 → **2 249** | 1,63 | 508 k → **422 k** (1,2×) |
+| Ar, raio 8 | 5 047 → 4 963 | 48 672 → **4 963** | 1,62 | 753 k → 1 014 k (**0,74×**) |
+| Terra, raio 6 | 275 → 335 | 4 523 → **343** | 1,45 | 140 k → **23 k** (6,1×) |
+| Terra, raio 8 | 565 → 697 | 9 111 → **727** | 1,53 | 230 k → **83 k** (2,8×) |
+| Pedra, raio 6 | 1 → 1 | 5 408 → **1** | 1,00 | 31 k → **1,0 k** (32×) |
+| Caverna, raio 8 | 220 → 242 | 2 575 → **242** | 1,50 | 98 k → **21 k** (4,7×) |
 
-Jaccard (sobreposição) da onda vs vanilla: 0.86 a 0.88 no ar, 0.72 a 0.80 em terra.
-Desvio no miolo da cratera (≤ 25% do alcance): **0% a ~10%**.
+Com vizinhança 6 o churn é **1,00** em quase todos os cenários: com uma só direcção por eixo há um
+caminho mínimo único, portanto cada bloco é extraído uma vez. O churn 1,4–1,6 com 26 vizinhança
+é o preço da fidelidade (vários caminhos quase iguais).
+
+⚠️ **Limites destas medições**, para não as ler a mais do que valem:
+
+- Ruído de ±60% nos casos pequenos (microbenchmark sem JMH, execuções sem Profile JIT partilhado).
+- **Em ar aberto e raio ≥ 8 a onda perde (0,74×) e não é um bug de implementação**: o vanilla faz
+  1 352 raios × ~35 amostras ≈ 47 000 amostras no raio 8; a onda relaxa 26 vizinhos por bloco
+  alcançado ≈ 8 000 × 26 ≈ 209 000 relaxamentos. Em campo aberto a onda paga por bloco o que o
+  vanilla paga por raio, e são mais relaxamentos do que amostras. O alcance do jogo real (TNT raio 4,
+  cristal de fim raio 6) fica abaixo deste ponto.
+- A sonda é um array: **subestima o custo real** (no jogo, resistência = `getBlockState` +
+  `getExplosionResistance`) e por isso **subestima o valor do `RAY_CACHE`**, cuja memorização só
+  paga se a leitura for cara. Daí a medição in-game ser a que decide.
 
 `RAY_CACHE` devolve **exactamente** o conjunto do vanilla (teste passa para raios 4/6/8 e para
-o cenário com obsidiana e água).
+o cenário com obsidiana e água). No harness é **mais lento** que o vanilla (0,83× a 0,95×) porque
+a memorização custa uma consulta hash por amostra e a sonda é barata; in-game depende do custo
+real de `getBlockState`.
 
 ### 5.2 Dentro do jogo (servidor 26.3 real, TNT raio 4 sobre plataforma de terra)
 
@@ -241,11 +260,13 @@ o cenário com obsidiana e água).
 
 Conclusões que os números sustentam:
 
-1. **`RAY_CACHE` dá paridade exacta, sempre.** Modo seguro por defeito para quem não quer
-   mudar nada visível.
-2. **A `WAVEFRONT` nunca é mais pequena que o vanilla** com vizinhança 18 ou 26 (só vanilla = 0):
-   a cratera é *maior*, o que é a direcção "segura" (nada sobrevive que devia ter explodido).
-3. **Em terreno plano a diferença é visível**: 133 → 226 blocos (＋70%) com vizinhança 26.
+1. **`RAY_CACHE` dá paridade exacta, sempre.** Modo seguro para quem não quer mudar nada visível.
+2. ⚠️ **A afirmação "a `WAVEFRONT` nunca é mais pequena que o vanilla" estava errada** e foi
+   retirada do README e desta secção. Medido (vizinhança 26, desvio da contagem): ar −2,9% /
+   −8,5% / −1,7% (raios 4/6/8), terra +44% / +22% / +23%, caverna +17% / +11% / +10%,
+   pedra 0 / 0 / −86% (contagens de 1 a 7 blocos). No ar a onda é **mais pequena**; a diferença
+   simétrica mostra que a *forma* também muda (17,4% em ar raio 8), concentrada na casca exterior.
+3. **Em terreno plano a diferença é visível**: 133 → 226 blocos (+70%) com vizinhança 26.
    Com vizinhança 6 a forma fica muito mais perto (27 → 23) mas deixa 12 blocos por destruir.
 4. `resistanceFactor` entre 1,15 e 1,3 encolhe a cratera; útil para afinar sem mudar de
    algoritmo.
@@ -276,9 +297,11 @@ Conclusões que os números sustentam:
 1. **Fidelidade vs velocidade:** respondida com dados (D25) — default `WAVEFRONT` + vizinhança
    26, e `RAY_CACHE` disponível para quem exige paridade exacta (verificada in-game 4 vezes).
    Falta medir o impacto no MSPT/TPS com `spark` em cascatas grandes.
-2. **Vizinhança default:** mantida 26, por ser a mais rápida e nunca mais pequena que o
-   vanilla. Se a comunidade reclamar da cratera maior: 18 é o meio termo e 6 o mais
-   conservador — os três estão medidos (§5.2).
+2. **Vizinhança default:** mantida 26, por ser a mais rápida nos raios que o jogo usa e por dar a
+   forma mais próxima do vanilla. **Correcção:** a justificação anterior ("nunca mais pequena que
+   o vanilla") era falsa — em ar a onda é 2% a 9% mais pequena. Em terra e caverna é 10% a 44%
+   maior. Se a comunidade reclamar: 18 é o meio termo e 6 o mais conservador — os três estão
+   medidos (§5.1).
 3. **`ALL_EXPLOSIONS`:** incluir creepers/wind charges/end crystals desde já, ou ficar
    atrás de flag? (assumido: incluído, atrás de config)
 4. **Mod Menu** — resolvido: **não incluído**. Um mod `environment: "server"` não tem onde
@@ -358,4 +381,37 @@ Conclusões que os números sustentam:
   rápido (13,8× in-game) e nunca é *mais pequeno* que o vanilla. Quem quiser paridade exacta usa
   `RAY_CACHE` (verificado exacto in-game 4 vezes). A cratera maior em terreno plano está
   documentada como(o) custo explícito, não escondida.
+  **⚠️ A frase "nunca é mais pequeno" foi desmentida pelas medições seguintes** — ver as entradas
+  de 2026-10-08 abaixo.
 - **2026-10-08** — Adicionados `AGENTS.md`, `opencode.json`, `.gitignore` e 10 skills de opencode em `.opencode/skills/` (auto-commit, auto-push, progress-tracking, fabric-mod-setup, gradle-build-verify, mixin-explosion, wavefront-algorithm, unit-testing-parity, benchmark-optimization, release-github). Pontos a corrigir no plano identificados em `AGENTS.md` (resistência, energia inicial, aleatoriedade, fallback).
+- **2026-10-08** — **Grelha densa no lugar das tabelas hash** (`ExplosionCells`, com duas
+  implementações: `DenseExplosionCells` no caso comum e `HashExplosionCells` como recurso para
+  alcances que não cabem em memória). Com vizinhança 26 e raio 8 a onda fazia ~209 000 relaxamentos
+  por explosão, cada um com dois lookups em tabela hash; indexada por offset ao centro, um passo
+  passa a ser uma subtração e um índice. Medido: ar raio 8 de 1 602 k → 1 004 k ns.
+  O conjunto de blocos ficou **idêntico** em todos os cenários de paridade: mudou a representação,
+  não o resultado.
+  - A grelha precisa do centro da explosão (o índice é o *offset* ao centro, não a coordenada
+    absoluta), e o `Workspace` só a reutiliza quando alcance **e** centro coincidem.
+  - Teto de `1 << 22` células; acima disso volta-se às tabelas hash, para uma explosão de raio
+    absurdo não explodir a memória.
+- **2026-10-08** — **Método de medição corrigido.** O benchmark passou a aquecer cada variante e a
+  reportar o **mínimo de 5 rondas**. Com a média, o vanilla em ar raio 8 mediava 1 375 µs numa
+  chamada e 753 µs noutra — uma diferença de 1,8× entre chamadas, com a qual não se decide nada.
+  Ruído residual: ±60% nos casos pequenos.
+- **2026-10-08** — **A onda é mais lenta que o vanilla em ar aberto com raio ≥ 8**, e a causa é
+  estrutural, não um bug de implementação: o vanilla gasta ~47 000 amostras (1 352 raios × ~35),
+  a onda gasta ~209 000 relaxamentos (26 vizinhos × 8 000 extrações). Em campo aberto a onda paga
+  por bloco o que o vanilla paga por raio. Confirmado por uma otimização que **não resultou**:
+  remover a verificação de limites do índice não mudou nada (1 168 k vs 1 014 k, dentro do ruído),
+  logo o custo está no volume de relaxamentos e não na aritmética de indexação.
+  O alcance real do jogo (TNT raio 4, cristal de fim raio 6) fica abaixo deste ponto.
+- **2026-10-08** — **`RAY_CACHE` sem boxing**: `Set<Long>` → `LongOpenHashSet`, consulta ao set
+  *antes* de `shouldExplode` (quase todas as amostras caem em blocos já registados, e
+  `shouldExplode` é uma chamada ao mundo) e `Memo` reutilizado por thread. Paridade exacta mantida
+  (teste verde). No harness fica **mais lento** que o vanilla (0,83× a 0,95×) porque a sonda é um
+  array — a memorização só paga se a leitura for cara, como é no mundo real.
+- **2026-10-08** — **README e §5 corrigidos**: a afirmação "a onda nunca é mais pequena que o
+  vanilla" era falsa (ar: −2,9% / −8,5% / −1,7% nos raios 4/6/8). Substituída pelas contagens
+  reais **e** pela diferença simétrica, que mostra que a *forma* também muda (17,4% em ar raio 8),
+  não só o tamanho.
