@@ -18,6 +18,12 @@ java {
     withSourcesJar()
 }
 
+tasks.withType(JavaCompile).configureEach {
+    // Sem isto o javac lê os fontes na codificação da plataforma (cp1252 no Windows) e as
+    // mensagens de log com acentos saem corrompidas.
+    options.encoding = 'UTF-8'
+}
+
 repositories {
     mavenCentral()
 }
