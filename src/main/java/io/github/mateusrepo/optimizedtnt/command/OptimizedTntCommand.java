@@ -56,9 +56,14 @@ public final class OptimizedTntCommand {
                         .then(Commands.literal("on").executes(ctx -> metrics(ctx, true)))
                         .then(Commands.literal("off").executes(ctx -> metrics(ctx, false))))
                 .then(Commands.literal("algorithm")
-                        .then(Commands.literal("wavefront").executes(ctx -> algorithm(ctx, "WAVEFRONT")))
                         .then(Commands.literal("ray_cache").executes(ctx -> algorithm(ctx, "RAY_CACHE")))
+                        .then(Commands.literal("hybrid").executes(ctx -> algorithm(ctx, "HYBRID")))
+                        .then(Commands.literal("wavefront").executes(ctx -> algorithm(ctx, "WAVEFRONT")))
                         .then(Commands.literal("vanilla").executes(ctx -> algorithm(ctx, "VANILLA"))))
+                .then(Commands.literal("hybrid_radius")
+                        .then(Commands.argument("raio", FloatArgumentType.floatArg(0.5F, 128.0F))
+                                .executes(ctx -> hybridRadius(ctx,
+                                        FloatArgumentType.getFloat(ctx, "raio")))))
                 .then(Commands.literal("scope")
                         .then(Commands.literal("tnt_only").executes(ctx -> scope(ctx, "TNT_ONLY")))
                         .then(Commands.literal("all_explosions").executes(ctx -> scope(ctx, "ALL_EXPLOSIONS"))))
@@ -91,7 +96,7 @@ public final class OptimizedTntCommand {
                     ExplosionMetrics.vanillaExplosions(), ExplosionMetrics.vanillaAverageBlocks(),
                     ExplosionMetrics.vanillaAverageMicros(),
                     ExplosionMetrics.speedup() > 0.0
-                            ? String.format(Locale.ROOT, " §8(§f%.1f×§8 mais rápido com a onda§8)", ExplosionMetrics.speedup())
+                            ? String.format(Locale.ROOT, " §8(§f%.1f×§8 mais rápido com a otimização§8)", ExplosionMetrics.speedup())
                             : ""));
         } else {
             reply(ctx, "§7métricas desligadas (usa §f/optimizedtnt metrics on§7)");
@@ -154,6 +159,15 @@ public final class OptimizedTntCommand {
         config.setRandomnessMode(OptimizedTntConfig.RandomnessMode.parse(raw, config.getRandomnessMode()));
         OptimizedTntConfig.save();
         reply(ctx, "§aAleatoriedade: §f" + config.getRandomnessMode());
+        return 1;
+    }
+
+    private static int hybridRadius(CommandContext<CommandSourceStack> ctx, float value) {
+        OptimizedTntConfig config = OptimizedTntConfig.get();
+        config.setHybridMaxRadius(value);
+        reply(ctx, String.format(Locale.ROOT,
+                "§aHíbrido: §fabaixo de raio %.1f usa a onda, a partir de %.1f usa o ray cache",
+                value, value));
         return 1;
     }
 

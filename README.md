@@ -14,10 +14,11 @@ que cada bloco candidato é lido do mundo **uma única vez**.
 | mappings | Mojmap (oficiais) |
 | Licença | MIT |
 
-> Estado: funcional, com testes de paridade e medido dentro do jogo (120 explosões idênticas
-> por algoritmo): `WAVEFRONT` **4,7×** mais rápido que o vanilla, `RAY_CACHE` **3,1×** e com
-> crateras indistinguíveis das do vanilla. Métodos, números completos e limites em
-> [`docs/benchmarks.md`](docs/benchmarks.md).
+> **Predefinição: `RAY_CACHE`** — 3,1× mais rápido que o vanilla, com crateras indistinguíveis
+> das dele (verificado em 800/800 explosões com sorteios reais). A `WAVEFRONT` é opcional e é 4,7×
+> mais rápida, mas muda a forma da cratera por um valor que **não dá para corrigir** — a
+> explicação está na secção "De onde vem o desvio". Medido in-game com 120 explosões idênticas por
+> algoritmo; métodos e limites em [`docs/benchmarks.md`](docs/benchmarks.md).
 
 ---
 
@@ -149,6 +150,10 @@ só com o volume da cratera.
 
 ## Diferenças face ao vanilla (honestidade)
 
+**Isto aplica-se só à `WAVEFRONT`.** A `RAY_CACHE` — a predefinição — dá o mesmo conjunto de
+blocos que o vanilla, verificado em 800/800 explosões com sorteios reais (4 terrenos, raio 6) e
+em comparação in-game directa.
+
 A onda trabalha à escala do bloco, o vanilla amostra continuamente. Daí resultam desvios reais:
 
 | Cenário (vizinhança 26) | Contagem (vanilla → onda) | Desvio | Diferença simétrica |
@@ -170,17 +175,56 @@ diferentes em raio 8 — a forma desloca-se na casca exterior); em terra e caver
 (10% a 44%); em pedra rara vez passa do primeiro bloco, porque a resistência corta a frente aos
 primeiros passos e a diferença de meio bloco decide tudo.
 
-O que nunca acontece é a cratera ficar fragmentada: o desvio é sempre um conjunto que é
-subconjunto ou superconjunto do outro, concentrado na casca exterior, e o miolo da cratera
-coincide quase exactamente (≤ 25% do alcance, 0% a ~10% de desvio).
+### De onde vem o desvio, exactamente? (teste Monte Carlo, 200 sorteios por cenário)
 
-As causas, todas compreensíveis:
+Até aqui a paridade era medida com energia fixa, o que não respondia à pergunta óbvia: o desvio
+vem de a onda ter **uma** energia, ou vem do **modelo de custo**? O teste corre quatro algoritmos
+com a mesma seed e o mesmo terreno: o oráculo vanilla com os 1352 sorteios reais (`V_real`), o
+mesmo oráculo mas com a **média** em todos os raios (`V_mean`), a onda com a média (`W_mean`) e a
+onda com energia por direção (`W_perdir`).
+
+| Terreno (raio 6) | V_real | V_mean | W_mean | W_perdir | do desvio simétrico |
+|---|---|---|---|---|---|
+| Ar | 2 894 | 2 460 | 2 261 | 2 270 | **74%** aleatoriedade, 26% modelo |
+| Terra | 416 | 275 | 329 | 324 | **72%** aleatoriedade, 28% modelo |
+| Caverna | 169 | 123 | 137 | 137 | **78%** aleatoriedade, 22% modelo |
+| Cavidade (cavar o chão) | 626 | 477 | 709 | 709 | 38% aleatoriedade, **62%** modelo |
+| Ar, raio 8 | 5 563 | 5 049 | 4 992 | 5 000 | **70%** aleatoriedade, 30% modelo |
+
+Resposta, em quatro pontos:
+
+1. **Não é só a média das energias.** Em meios homogéneos, 70% a 78% da diferença simétrica vem
+   de a onda ter uma energia só: o próprio oráculo vanilla, com a mesma média em todos os raios,
+   já desvia quase tanto. A causa é que a casca do vanilla é posta pelo raio **mais sortudo** dos
+   1352 (a energia pode ser 1,3× a média), e a onda tem uma energia só.
+
+2. **O resto é geometria do vanilla e não se corrige.** O loop do vanilla só gera raios em que pelo
+   menos um dos três componentes é 0 ou 15 — ou seja, só nas **faces** do cubo `[-1,1]³`. Depois de
+   normalizar, esse conjunto não cobre a esfera uniformemente e deixa blocos que **nenhum** raio
+   toca: medidos 30 no ar e **347 dentro de uma cavidade**, contra 0 em terra sólida. Numa cavidade
+   pequena há blocos de ar no miolo que o vanilla nunca destrói em 200 sorteios. Uma onda ao nível
+   do bloco cobre todas as direcções da rede, por isso preenche essas sombras — é defeito de
+   amostragem do vanilla, e a onda não o pode reproduzir sem deixar de ser uma onda.
+
+3. **Não há correcção única.** Subir a energia da onda fecha a contagem no ar (−21,9% → +21,2%
+   com média+1σ) e na terra (−20,8% → −2,2%), mas na cavidade a onda já é 19,3% grande demais e
+   ficaria 79,1% grande demais. Os dois erros empurram em sentidos opostos em geometrias
+   diferentes. Por isso `PER_DIRECTION` (medido: <0,5% de diferença) e mexer na energia não
+   resolvem — e é por isso que a resposta é `RAY_CACHE`, não um afinação.
+
+4. **O que a onda nunca faz é ficar para trás no miolo.** Medido em todos os cenários: **zero**
+   blocos do miolo que o vanilla destrói e a onda não. Qualquer desvio que reste é a onda a
+   destruir blocos a *mais*.
+
+Causas secundárias, todas compreensíveis:
 
 - a onda é simétrica ao **bloco** onde nasce o raio; o vanilla é simétrico ao **ponto exacto**;
 - a onda chega a blocos "diagonalmente acessíveis" por onde nenhum raio passa exactamente, e não
   atravessa diagonais isoladas (o vanilla também não);
-- numa diagonal a resistência é cobrada uma vez por bloco em vez de ser repartida pelos blocos
-  que o passo atravessa.
+- **um passo diagonal atravessa dois blocos pelo preço de um** (a onda cobra só o bloco de destino,
+  os blocos do canto saem de graça). *Isto era a hipótese principal e está refutada:* com
+  `neighborhood: 6`, que não tem diagonais nenhuma, o erro do miolo na cavidade até sobe
+  (0,106 → 0,159) e a cratera encolhe para −51%. Não é a causa.
 
 Em terreno com volume a cratera da onda fica **maior** (terra: +22% a +44%). Numa camada fina, ao
 contrário: no benchmark in-game (uma camada de terra sobre pedra) a onda dá 515,5 blocos contra
@@ -196,22 +240,28 @@ tratado pelo código vanilla intacto: o mod só substitui **quais** blocos são 
 
 | Prioridade | Configuração |
 |---|---|
-| Crateras **idênticas** ao vanilla | `algorithm: "RAY_CACHE"` — 0,06% de diferença de blocos e **3,1× mais rápido** que o vanilla, medido in-game |
-| Máxima performance | `algorithm: "WAVEFRONT"` + `neighborhood: 26` (predefinição) — **4,7×** medido in-game |
+| Crateras **indistinguíveis** das do vanilla | `algorithm: "RAY_CACHE"` — **predefinição**. Verificado em 800/800 explosões com sorteios reais, 4 terrenos. **3,1× mais rápido** que o vanilla, medido in-game |
+| Máxima performance, aceitando uma cratera ligeiramente diferente | `algorithm: "WAVEFRONT"` + `neighborhood: 26` — **4,7×** medido in-game |
+| Quer o melhor dos dois sem decidir | `algorithm: "HYBRID"` — a onda nos raios que o jogo usa, o ray cache a partir de raio 8 |
 | Cratera mais parecida, sem perder blocos | `algorithm: "WAVEFRONT"` + `neighborhood: 18` |
-| Afinar o tamanho da cratera | `resistanceFactor`: `1.15`–`1.3` encolhe a cratera |
+| Afinar o tamanho da cratera | `resistanceFactor` **acima** de `1.0` encolhe, abaixo alarga |
 
-A predefinição é `WAVEFRONT` + `26` porque é o mais rápido dos três (4,7× contra 3,1× in-game) e
-porque o `scope: TNT_ONLY` limita o alcance da mudança. O custo é a cratera: em terreno com
-volume é 10% a 44% maior, em camadas finas 17% menor. **Quem quiser a cratera do vanilla sem
-pensar no assunto muda para `RAY_CACHE` num comando, sem reiniciar**, e só abdica de 1,5× de
-velocidade.
+**Porquê `RAY_CACHE` por omissão:** é 3,1× mais rápido que o vanilla *e* dá crateras
+indistinguíveis das dele, num mundo onde quem põe TNT cannons e redstone nota a diferença. A onda
+é 1,5× mais rápida ainda, mas o teste Monte Carlo (§ abaixo) mostrou que essa diferença de forma
+**não é corrigível**: depende da geometria e empurra em sentidos opostos em terrenos diferentes.
+Não vale a pena trocar paridade por 1,5×.
 
-**Sobre o `RAY_CACHE`:** mantém os 1352 raios do vanilla e memoriza a resistência por bloco, o
-que dá resultado indistinguível do vanilla — 623,0 blocos contra 622,6 in-game, e o teste de
-paridade passa contra o oráculo vanilla — com **720 leituras de bloco por explosão** em vez das
-~18 por raio que o vanilla faz (24 336 por explosão para raio 4, medido no harness). É a opção
-para quem não quer ver crateras diferentes.
+**Sobre o `RAY_CACHE`:** mantém os 1352 raios do vanilla e memoriza a resistência por bloco, com
+**720 leituras de bloco por explosão** em vez das ~18 por raio que o vanilla faz (24 336 por
+explosão para raio 4, medido no harness). A única diferença face ao vanilla é a energia: usa a
+média dos 1352 sorteios em vez de um sorteio por raio, para não perturbar a sequência do
+`RandomSource`. Isso dá 623,0 blocos contra 622,6 in-game — 0,06%.
+
+**Sobre o `HYBRID`:** a onda é *mais lenta* que o vanilla em ar aberto a partir de raio 8
+(0,74×), por isso o híbrido acima desse limiar passa a ray cache. Vale a pena notar que **raio 8
+não existe no jogo vanilla** (TNT tem 4, cristal de fim 6): isto é uma rede de segurança para
+explosões de mods, não uma melhoria do dia-a-dia.
 
 ## Instalação (servidor vanilla com Fabric)
 
@@ -240,11 +290,12 @@ Na primeira vez é criado `config/optimizedtnt.json`.
 | Chave | Valores | Descrição |
 |---|---|---|
 | `enabled` | `true` / `false` | Liga/desliga a otimização, sem reiniciar o servidor. |
-| `scope` | `TNT_ONLY` / `ALL_EXPLOSIONS` | Só TNT (`PrimedTnt` / `MinecartTNT`) ou todas as explosões (creepers, wind charges, end crystals, beds…). |
-| `algorithm` | `WAVEFRONT` / `RAY_CACHE` / `VANILLA` | `WAVEFRONT` é o novo; `RAY_CACHE` dá forma idêntica ao vanilla; `VANILLA` não substitui nada. |
-| `neighborhood` | `6` / `18` / `26` | Vizinhança da expansão. Mais alto = mais fiel **e mais lento** (cada bloco relaxa 26 vizinhos em vez de 6). |
-| `resistanceFactor` | float `≥ 0` | Multiplicador do custo de resistência. `1.0` é o valor medido; valores menores dão explosões maiores. |
-| `randomnessMode` | `MEAN` / `PER_DIRECTION` | `MEAN` usa a média dos 1352 sorteios; `PER_DIRECTION` usa a média por tipo de direção. Ambos consomem os 1352 valores. |
+| `scope` | `TNT_ONLY` / `ALL_EXPLOSIONS` | Só TNT (`PrimedTnt` / `MinecartTNT`) — **predefinição** — ou todas as explosões (creepers, wind charges, end crystals, beds…). |
+| `algorithm` | `RAY_CACHE` / `HYBRID` / `WAVEFRONT` / `VANILLA` | `RAY_CACHE` é a **predefinição**: os mesmos raios do vanilla com a resistência memorizada, crateras indistinguíveis. `HYBRID` usa a onda abaixo de `hybridMaxRadius` e o ray cache a partir daí. `WAVEFRONT` é o mais rápido mas muda a forma da cratera. `VANILLA` não substitui nada. |
+| `hybridMaxRadius` | float `> 0` | Raio a partir do qual o `HYBRID` usa o ray cache. `8.0` por omissão, porque em ar aberto a onda deixa de compensar a partir de raio 8. |
+| `neighborhood` | `6` / `18` / `26` | Vizinhança da expansão (só com `WAVEFRONT`/`HYBRID`). Mais alto = mais fiel **e mais lento** (cada bloco relaxa 26 vizinhos em vez de 6). |
+| `resistanceFactor` | float `≥ 0` | Multiplicador do custo de resistência (só com `WAVEFRONT`/`HYBRID`). `1.0` é o valor medido; **acima de 1.0 encolhe** a cratera, abaixo alarga. |
+| `randomnessMode` | `MEAN` / `PER_DIRECTION` | Só com `WAVEFRONT`/`HYBRID`. `MEAN` usa a média dos 1352 sorteios; `PER_DIRECTION` usa a média por tipo de direção (medido: diferença < 0,5%, não resolve o desvio). Ambos consomem os 1352 valores para não perturbar a sequência do `RandomSource`. |
 | `cacheBlockResistance` | `true` / `false` | Cache da resistência por `BlockState`, só quando o calculador é o vanilla conhecido. |
 | `metrics` | `true` / `false` | Contadores de tempo e leituras, para benchmark. Custo zero quando desligado. |
 
@@ -259,7 +310,8 @@ omissão com um aviso no log.
 | `/optimizedtnt reload` | Relê o JSON (permite ligar/desligar sem reiniciar) |
 | `/optimizedtnt save` | Grava a configuração |
 | `/optimizedtnt on` \| `off` | Liga/desliga a otimização |
-| `/optimizedtnt algorithm wavefront\|ray_cache\|vanilla` | Muda de algoritmo |
+| `/optimizedtnt algorithm ray_cache\|hybrid\|wavefront\|vanilla` | Muda de algoritmo |
+| `/optimizedtnt hybrid_radius <raio>` | Raio a partir do qual o `HYBRID` passa a ray cache |
 | `/optimizedtnt scope tnt_only\|all_explosions` | Muda o âmbito |
 | `/optimizedtnt neighborhood 6\|18\|26` | Muda a vizinhança |
 | `/optimizedtnt resistance <0..10>` | Muda o fator de resistência |
@@ -280,7 +332,10 @@ src/main/java/io/github/mateusrepo/optimizedtnt/
 ├── command/OptimizedTntCommand.java      # /optimizedtnt
 ├── explosion/                            # NÚCLEO — sem dependência do Minecraft
 │   ├── BlockProbe.java                   #   interface mínima para o mundo
-│   ├── ExplosionWavefront.java           #   Dijkstra com fila de prioridade e 2 mapas
+│   ├── ExplosionWavefront.java           #   Dijkstra com fila de prioridade
+│   ├── ExplosionCells.java               #   interface das células da onda
+│   ├── DenseExplosionCells.java          #   grelha densa (caminho normal)
+│   ├── HashExplosionCells.java           #   tabelas hash (alcances enormes)
 │   ├── ExplosionRayCaster.java           #   os 1352 raios do vanilla (com memo opcional)
 │   ├── ExplosionRayCache.java            #   RAY_CACHE
 │   ├── VanillaRayExplosion.java          #   oráculo exacto
@@ -289,7 +344,7 @@ src/main/java/io/github/mateusrepo/optimizedtnt/
 │   ├── ExplosionRandomEnergy.java        #   os 1352 sorteios do vanilla
 │   ├── ExplosionSink.java / FloatSource.java
 │   ├── Neighborhood.java                 #   tabelas de vizinhança
-│   └── ExplosionOptimizer.java           #   ADAPTADOR ao Minecraft
+│   └── ExplosionOptimizer.java           #   ADAPTADOR ao Minecraft (e escolha do algoritmo)
 ├── metrics/ExplosionMetrics.java
 └── mixin/{ServerExplosionMixin,CommandsMixin,MinecraftServerMixin}.java
 ```
@@ -329,12 +384,17 @@ de leituras de bloco.
 Feito e verificado: F0 (build), F1 (config), F2 (núcleo + testes de paridade), F3 (mixin +
 adaptador), F4 (comandos), F5 (RAY_CACHE).
 
-Verificado **dentro do jogo** (servidor 26.3 real, TNT com `/optimizedtnt compare`): os mixins
-aplicam-se, a onda e o `RAY_CACHE` correm, o comando responde e as métricas registam. Os números
-estão nas tabelas acima.
+Verificado **dentro do jogo** (servidor 26.3 real): os três mixins aplicam-se, os quatro
+algoritmos correm, o comando responde e as métricas registam. Benchmark controlado de 120
+explosões idênticas por algoritmo nas tabelas acima.
 
-Pendente: medição de impacto no MSPT/TPS com `spark` em cascatas grandes de TNT, e cenários mais
-variados in-game (obsidiana, água, end crystal). Os scripts de teste ficaram em `tools/`.
+Verificado **em teste** (sem Minecraft): paridade do `RAY_CACHE` com o oráculo vanilla em 800/800
+explosões com sorteios reais, em 4 terrenos; a onda nunca deixa por destruir um bloco do miolo que
+o vanilla destrói, em todos os cenários; e o `HYBRID` escolhe o algoritmo pelo raio.
+
+Pendente: MSPT/TPS com `spark` em cascatas grandes de TNT (o relatório do spark não é legível a
+partir do log), cenários in-game mais variados (obsidiana, água, end crystal), e um teste com um
+cliente real a ver uma cratera ao lado de outra. Os scripts de teste ficaram em `tools/`.
 
 **Mod Menu**: não incluído. Este mod é `environment: "server"` e uma ecrã de configuração só
 existe no cliente; para um servidor não é necessário instalar nada nos jogadores. Se for preciso,

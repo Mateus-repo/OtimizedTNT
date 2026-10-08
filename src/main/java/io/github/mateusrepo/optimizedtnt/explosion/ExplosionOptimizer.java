@@ -1,6 +1,7 @@
 package io.github.mateusrepo.optimizedtnt.explosion;
 
 import io.github.mateusrepo.optimizedtnt.config.OptimizedTntConfig;
+import io.github.mateusrepo.optimizedtnt.config.OptimizedTntConfig.Algorithm;
 import io.github.mateusrepo.optimizedtnt.metrics.ExplosionMetrics;
 import it.unimi.dsi.fastutil.objects.ObjectArrayList;
 import net.minecraft.core.BlockPos;
@@ -60,8 +61,9 @@ public final class ExplosionOptimizer {
         boolean measure = ExplosionMetrics.isEnabled();
         long start = measure ? System.nanoTime() : 0L;
 
+        Algorithm algorithm = choose(config.getAlgorithm(), radius, config.getHybridMaxRadius());
         int blocks;
-        if (config.getAlgorithm() == OptimizedTntConfig.Algorithm.RAY_CACHE) {
+        if (algorithm == Algorithm.RAY_CACHE) {
             blocks = ExplosionRayCache.forEach(params, probe, floats, packed -> result.add(toBlockPos(packed)));
         } else {
             blocks = ExplosionWavefront.compute(params, probe, packed -> result.add(toBlockPos(packed))).blocks();
@@ -71,6 +73,20 @@ public final class ExplosionOptimizer {
             ExplosionMetrics.record(blocks, probe.reads(), System.nanoTime() - start);
         }
         return result;
+    }
+
+    /**
+     * Resolve o algoritmo a usar numa explosão concreta.
+     *
+     * <p>No {@link Algorithm#HYBRID} a decisão é por raio: abaixo do limiar vai a onda (mais
+     * rápida e é o que o jogo usa), acima vai o ray cache. A troca é feita aqui e não na
+     * configuração porque o raio só se conhece na explosão.
+     */
+    public static Algorithm choose(Algorithm configured, float radius, float hybridMaxRadius) {
+        if (configured != Algorithm.HYBRID) {
+            return configured;
+        }
+        return radius >= hybridMaxRadius ? Algorithm.RAY_CACHE : Algorithm.WAVEFRONT;
     }
 
     private static BlockPos toBlockPos(long packed) {

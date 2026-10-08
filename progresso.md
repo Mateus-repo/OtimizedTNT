@@ -1,3 +1,8 @@
+0. **D26 — default trocado para `RAY_CACHE`.** O teste Monte Carlo (D28) confirmou que o desvio de
+   forma da onda não é corrigível, e que a `RAY_CACHE` é indistinguível do vanilla em 800/800
+   explosões com sorteios reais. 3,1× mais rápido com paridade > 4,7× mais rápido sem paridade, num
+   jogo onde a forma da cratera é visível (TNT cannons, redstone). A onda fica como modo opcional
+   documentado e o `HYBRID` (D27) como compromisso automático.
 # Progresso — Optimized TNT (Fabric 26.3, server-side)
 
 Documento de trabalho: planeamento, decisões tomadas, tarefas e riscos.
@@ -10,7 +15,7 @@ O README é para o utilizador final; este ficheiro é o plano técnico e o regis
 ---
 
 ## 1. Âmbito
-
+3. **`ALL_EXPLOSIONS` — resolvido (D29): desligado por omissão.** Só TNT (e carrinhos). Creepers, cristais e wind charges têm raios e contextos diferentes e nunca foram medidos; quem os quiser liga `ALL_EXPLOSIONS` na configuração.
 | Item | Decisão |
 |---|---|
 | Lado | Servidor dedicado apenas (`environment: "server"`, sem entrypoint client obrigatório) |
@@ -440,4 +445,49 @@ Conclusões que as medições antigas davam, e o que mudou:
 - **2026-10-08** — **README e §5 corrigidos**: a afirmação "a onda nunca é mais pequena que o
   vanilla" era falsa (ar: −2,9% / −8,5% / −1,7% nos raios 4/6/8). Substituída pelas contagens
   reais **e** pela diferença simétrica, que mostra que a *forma* também muda (17,4% em ar raio 8),
-  não só o tamanho.
+5. **Suporte a 26.2/26.4 — resolvido (D30): só 26.3 na primeira versão.** Os mixins dependem de nomes internos (`calculateExplodedPositions`, `ExplosionDamageCalculator`) que mudam entre versões; multiversion aqui é trabalho extra sem benefício enquanto o jogo não pedir 26.4.
+
+- **2026-10-08** — **D26: o default passou de `WAVEFRONT` para `RAY_CACHE`.** Decisão pedida pelo
+  utilizador, e os dados sustentam-na: a onda é 1,5× mais rápida (4,7× contra 3,1× in-game), mas o
+  seu desvio de forma **não tem correção possível** (D28), enquanto a `RAY_CACHE` é
+  indistinguível do vanilla em 800/800 explosões com sorteios reais. Num servidor onde se vê a
+  cratera (TNT cannons, redstone), trocar paridade por 1,5× não compensa. `scope` fica `TNT_ONLY`
+  (D29) e a versão é só 26.3 (D30).
+- **2026-10-08** — **D27: algoritmo `HYBRID`.** Escolhe `WAVEFRONT` abaixo de `hybridMaxRadius`
+  (8.0 por omissão) e `RAY_CACHE` a partir daí, porque a onda é mais lenta que o vanilla em ar
+  aberto com raio ≥ 8 (0,74×). Aviso honesto: **raio 8 não existe no jogo vanilla** (TNT = 4,
+  cristal de fim = 6), portanto isto é rede de segurança para explosões de mods, não uma melhoria
+  do dia-a-dia. Config + comando `/optimizedtnt hybrid_radius <raio>`, decisão por explosão em
+  `ExplosionOptimizer.choose`.
+- **2026-10-08** — **D28: teste Monte Carlo, e a resposta sobre o desvio da onda.** O teste
+  (`MonteCarloParityTest`, 200 sorteios por cenário, 4 terrenos) separa as causas com o truque do
+  `V_mean`: o oráculo vanilla com a **média** dos 1352 sorteios em todos os raios. Medido (raio 6):
+
+  | terreno   | V_real | V_mean | W_mean | do desvio simétrico |
+  |---|---|---|---|---|
+  | ar        | 2 894  | 2 460  | 2 261  | 74% aleatoriedade |
+  | terra     |   416  |   275  |   329  | 72% aleatoriedade |
+  | caverna   |   169  |   123  |   137  | 78% aleatoriedade |
+  | cavidade  |   626  |   477  |   709  | 62% modelo        |
+  | ar raio 8 | 5 563  | 5 049  | 4 992  | 70% aleatoriedade |
+
+  Quatro conclusões, todas verificadas por teste:
+
+  1. **A média das energias explica 70% a 78%** do desvio em meios homogéneos: o próprio
+     oráculo do vanilla, com uma energia só, já desvia quase tanto. Causa: a casca do vanilla é
+     posta pelo raio mais sortudo dos 1352, não pela média.
+  2. **O resto é amostragem do vanilla e é irredutível.** O loop do vanilla só gera raios em que
+     um dos três componentes é 0 ou 15, ou seja só nas faces do cubo `[-1,1]³`; depois de
+     normalizar não cobre a esfera uniformemente. Blocos que **nenhum** raio toca: 30 no ar e
+     **347 dentro de uma cavidade**, 0 em terra sólida. Numa cavidade há até blocos de ar no
+     miolo que o vanilla nunca destrói em 200 sorteios.
+  3. **Não há correção única.** Subir a energia fecha a contagem no ar (−21,9% → +21,2% com
+     média+1σ) e na terra (−20,8% → −2,2%), mas na cavidade a onda já é 19,3% grande demais e
+     ficaria 79,1% grande demais. `PER_DIRECTION` dá <0,5% de diferença.
+     **Hipótese refutada:** achei que os passos diagonais (que atravessam dois blocos pelo preço
+     de um) eram a causa do desvio no miolo; com `neighborhood: 6`, sem diagonais, o erro do miolo
+     **sobe** (0,106 → 0,159) e a cratera encolhe para −51%.
+  4. **Invariante que fica:** no miolo, a onda nunca deixa por destruir um bloco que o vanilla
+     destrói — 0 em todos os cenários, como teste. Todo o desvio residual é onda a destruir a mais.
+  5. `RAY_CACHE` = vanilla em **800/800** explosões com sorteios reais (4 terrenos), que é a base
+     da predefinição.
