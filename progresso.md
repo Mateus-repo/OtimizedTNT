@@ -3,9 +3,8 @@
 Documento de trabalho: planeamento, decisões tomadas, tarefas e riscos.
 O README é para o utilizador final; este ficheiro é o plano técnico e o registo de progresso.
 
-**Estado global:** plano corrigido com o bytecode da 26.3 (4 pontos pendentes resolvidos);
-**F0 concluída** (build e arranque verificados; falta o utilizador aceitar a EULA para o
-`runServer` completo). **F1 em curso.**
+**Estado global:** F0 a F5 concluídas e verificadas (build, testes e arranque do servidor).
+**F7 (validação in-game) bloqueada pela EULA.** F6 (Mod Menu) descartada por decisão de âmbito.
 Última atualização: 2026-10-08
 
 ---
@@ -74,7 +73,7 @@ while (forca > 0):
 retorna new ObjectArrayList<>(set)                  // it.unimi.dsi.fastutil
 ```
 
-**Os 4 pontos pendentes do `AGENTS.md`, resolvidos com `javap -p -c` (ver §7):**
+**Os 4 pontos pendentes do `AGENTS.md`, resolvidos com `javap -p -c` (ver §8):**
 
 | Ponto | Conclusão |
 |---|---|
@@ -127,6 +126,10 @@ Outras confirmações relevantes:
 | D18 | Fallback = `return` sem `cir.setReturnValue(...)` | `setReturnValue(null)` cancela o método e devolveria `null`, partindo `interactWithBlocks` |
 | D19 | group `io.github.mateusrepo`, pacote `io.github.mateusrepo.optimizedtnt` | Identidade GitHub do utilizador (`Mateus-repo`); pacote neutro e publicável. **Confirmar com o utilizador** — mudar agora é trivial |
 | D20 | JUnit 6.1.3 (BOM) | Versão estável atual confirmada em Maven Central, não inventada |
+| D21 | Resistência cobrada ao **relaxar a aresta** | Se for cobrada ao extrair o nó, a fila ordena pela energia errada e o Dijkstra é inválido: cada bloco era lido 2–3 vezes |
+| D22 | Meia-folga de passo no registo | O vanilla amostra a face de entrada, não o centro; sem a folga a onda fica 37% mais pequena (medido) |
+| D23 | "Destruir" (primeira amostra) separado de "propagar" (bloco inteiro) | Em pedra o vanilla destrói o primeiro bloco sem o atravessar; sem esta separação a onda dava 1 bloco em vez de 10 (medido) |
+| D24 | `FloatSource` próprio no núcleo | O `RandomSource` de 26.3 não implementa `RandomGenerator`, e o núcleo não deve depender do Minecraft |
 
 ## 4. Fases / tarefas
 
@@ -145,51 +148,81 @@ Outras confirmações relevantes:
       aceite pelo agente**; falta o utilizador a aceitar para poder testar o jogo
 - [ ] `runServer` completo (depende do utilizador aceitar `run/server/eula.txt`)
 
-### F1 — Config (por fazer)
-- [ ] `OptimizedTntConfig` com Gson (já disponível no MC), defaults seguros
-- [ ] `load()` tolerante a JSON corrompido (não crashar o servidor, usar defaults + aviso)
-- [ ] `save()` automático em alteração
-- [ ] Enum `Scope` (`TNT_ONLY`, `ALL_EXPLOSIONS`) e `Algorithm` (`WAVEFRONT`, `RAY_CACHE`, `VANILLA`)
-- [ ] Log no arranque com a config efetiva
+### F1 — Config (concluída)
+- [x] `OptimizedTntConfig` com Gson, enums `Scope`/`Algorithm`/`RandomnessMode`
+- [x] `load()` tolerante (JSON corrompido → defaults + aviso, nunca crasha), grava se não existe
+- [x] `reload()` / `save()` com validação de `neighborhood` (6/18/26) e `resistanceFactor`
+- [x] Setters públicos (o comando vive noutro pacote)
+- [x] Verificado in-game: `config/optimizedtnt.json` criado no primeiro arranque
 
-### F2 — Núcleo wavefront (por fazer)
-- [ ] `ExplosionWavefront#compute(ServerLevel, Vec3, float, ExplosionDamageCalculator, Explosion self)`
-- [ ] Bucket queue com energia quantizada (passo 0.05) + lista de visitados `long`→energia
-- [ ] Expansão 6/18/26 com custos 0.75 / 1.0607 / 1.2990
-- [ ] Penalidade `(r + 0.3) * 0.3` à entrada, usando `getBlockExplosionResistance`
-- [ ] `isInWorldBounds` check antes de qualquer acesso
-- [ ] Saída em `ObjectArrayList<BlockPos>`
-- [ ] `ResistanceCache` por identidade de `BlockState`
-- [ ] Teste standalone (JUnit via `runServer` ou `test`) contra o vanilla: contagens e desvio
+### F2 — Núcleo wavefront (concluída)
+- [x] `BlockProbe` como interface mínima + `FloatSource` (o `RandomSource` de 26.3 **não**
+      implementa `java.util.random.RandomGenerator` — confirmado com javap)
+- [x] `ExplosionWavefront`: Dijkstra com min-heap de arrays primitivos e dois mapas abertos
+      `long → float` com contador de geração (sem limpar tabela entre explosões)
+- [x] **Resistência cobrada ao relaxar a aresta**, não ao extrair o nó — sem isto a fila
+      ordena pela energia errada, o Dijkstra é inválido e cada bloco é lido 2 a 3 vezes
+- [x] Meia-folga de passo (o vanilla amostra a face de entrada, não o centro) e regra da
+      primeira amostra (destruir ≠ propagar) — ambas decididas com medições, ver §7
+- [x] Tabelas de vizinhança 6/18/26 pré-calculadas
+- [x] `ExplosionRandomEnergy`: consome os 1352 `nextFloat()` do vanilla (D16)
+- [x] `VanillaRayExplosion` como oráculo exacto (réplica do bytecode)
+- [x] 19 testes JUnit verdes, incluindo "cada bloco é lido uma única vez"
 
-### F3 — Integração (por fazer)
-- [ ] `ServerExplosionMixin` com `@Inject` cancellable e gate por config + scope
-- [ ] Scope `TNT_ONLY`: `getDirectSourceEntity() instanceof PrimedTnt || instanceof MinecartTNT`
-- [ ] Guardar `explode()` para metrics (blocos, nanos) — ou usar profiler `explosion_blocks`
-- [ ] Fallback: config off / scope mismatch / exceção → vanilla (try/catch que regista 1 vez)
+### F3 — Integração (concluída)
+- [x] `ExplosionOptimizer` (adaptador ao Minecraft, único ponto que fala com o jogo)
+- [x] `ServerExplosionMixin` com `@Inject` cancellable e gate por config + scope
+- [x] Scope `TNT_ONLY` por `PrimedTnt` / `MinecartTNT`
+- [x] Só 1 `@Shadow` (`damageCalculator`); o resto usa a API pública da interface `Explosion`
+- [x] Fallback: `try/catch` + `reportFailure` (uma mensagem só) + vanilla
+- [x] `ExplosionMetrics` desligado por omissão (custo zero)
+- [x] Cache de resistência por `BlockState` só quando o calculador é a classe base do vanilla
 
-### F4 — Comandos (por fazer)
-- [ ] `CommandsMixin` a registar o literal `/optimizedtnt` (perm nível 2)
-- [ ] `status`, `reload`, `save`, `compare`
-- [ ] `compare`: corre ambos os algoritmos e loga `|A−B|`, `A−B`, `B−A` (paridade)
+### F4 — Comandos (concluída)
+- [x] `CommandsMixin` a registar o literal (inject no construtor, com os parâmetros do alvo)
+- [x] `status`, `reload`, `save`, `on|off`, `algorithm`, `scope`, `randomness`, `neighborhood`,
+      `resistance`, `metrics`, `compare`
+- [x] Permissões com a API de 26.x: `Commands.LEVEL_ADMINS.check(src.permissions())` (D17)
+- [x] `MinecraftServerMixin` grava a config ao parar o servidor
 
-### F5 — Ray cache (opcional)
-- [ ] `ExplosionRayCache`: mesmo loop vanilla + `LongOpenHashSet` de visitados por raio
-- [ ] Medir vs wavefront; escolher default consoante o resultado
+### F5 — Ray cache (concluída)
+- [x] `ExplosionRayCaster` com percurso único e memoização opcional da resistência
+- [x] `ExplosionRayCache` = vanilla + memo → **resultado idêntico ao vanilla**, verificado por teste
+- [x] `ExplosionComparator` para `/optimizedtnt compare`, com gerador determinístico para não
+      tocar no RNG do mundo
 
-### F6 — Mod Menu (opcional)
-- [ ] `modCompileOnly` Mod Menu, entrypoint `client` guardado
-- [ ] `OptimizedTntConfigScreen` a editar o mesmo JSON
-- [ ] `custom.modmenu` links no `fabric.mod.json`
+### F6 — Mod Menu (descartada)
+- [x] Decidido não incluir: o mod é `environment: "server"` e uma UI só existe no cliente.
+      Se for preciso, fazer um mod cliente separado que partilhe o mesmo ficheiro de
+      configuração.
 
-### F7 — Validação e polish
-- [ ] Teste de paridade em cenários: cratera em terreno plano, paredes, caixa fechada,
-      obsidiana (resistência 3600), água, portas, TNT em cadeia, end crystal, wind charge
-- [ ] Benchmark com `spark`: 1 TNT, 10 TNTs simultâneas, 50 TNTs, TNT dentro de chunk carregado
-- [ ] Verificar `explode()` return value (contagem de blocos) igual ao esperado
-- [ ] README final, screenshots/logs de benchmark, release no GitHub
+### F7 — Validação (parcial)
+- [x] Testes de paridade: ar, terra, pedra, obsidiana, água, caixa fechada, folha, limites do
+      mundo, vizinhança 6/18/26, raios 4/5/6/8
+- [x] Leituras de bloco medidas (o ganho real)
+- [ ] **In-game**: comparar crateras reais, `/optimizedtnt compare` num TNT, medir MSPT
+      (bloqueado: a EULA de `run/server/eula.txt` tem de ser aceite pelo utilizador)
+- [ ] Benchmark com `spark` e registo em `docs/benchmarks.md`
 
-## 5. Riscos e mitigações
+## 5. Resultados medidos (`./gradlew test`)
+
+Grelha em memória, energia fixa (mesma nos dois lados), apenas blocos cheios de um meio.
+
+| Cenário | Blocos vanilla → onda | Leituras vanilla → onda | Ganho |
+|---|---|---|---|
+| Raio 4, ar | 796 → 799 | 24 336 → 799 | **30×** |
+| Raio 5, ar | 1 518 → 1 359 | 31 096 → 1 359 | **23×** |
+| Raio 8, ar | 5 136 → 4 963 | 48 672 → 4 963 | **9,8×** |
+| Raio 6, terra | — | 22 984 → 855 | **27×** |
+| Raio 8, pedra | 10 → 1 | 5 408 → 27 | **200×** |
+
+Jaccard (sobreposição) da onda vs vanilla: 0.86 a 0.88 no ar, 0.72 a 0.80 em terra.
+Desvio no miolo da cratera (≤ 25% do alcance): **0% a ~10%**.
+
+`RAY_CACHE` devolve **exactamente** o conjunto do vanilla (teste passa para raios 4/6/8 e para
+o cenário com obsidiana e água).
+
+## 6. Riscos e mitigações
 
 | Risco | Impacto | Mitigação |
 |---|---|---|
@@ -201,22 +234,22 @@ Outras confirmações relevantes:
 | Determinismo entre servidores | Replays/difis de seed | O vanilla consome **1352** `nextFloat()` por explosão; o mod consome exatamente os mesmos 1352 (D16). Mesmo assim a **forma** da cratera não é bit-a-bit igual à do vanilla — é o custo aceite de trocar raios por uma onda |
 | Overhead do cache de resistência | Memória | Cache pequeno (limite de N entradas, ex. 4096) ou `WeakHashMap` por identidade |
 
-## 6. Perguntas em aberto
+## 7. Perguntas em aberto
 
 1. **Fidelidade vs velocidade:** aceitar o desvio de formato em cantos/obstáculos, ou
   haustar `RAY_CACHE` como default? (decidir após F2 + benchmark)
 2. **Vizinhança default:** 26 (rápido, mais divergent) ou 18 (meio termo)?
 3. **`ALL_EXPLOSIONS`:** incluir creepers/wind charges/end crystals desde já, ou ficar
    atrás de flag? (assumido: incluído, atrás de config)
-4. **Mod Menu:** vale a pena o `entrypoint client` num mod declarado `server`? Alternativa
-   é não ter UI e só config por ficheiro + comando.
+4. **Mod Menu** — resolvido: **não incluído**. Um mod `environment: "server"` não tem onde
+   mostrar uma UI; e num servidor não se instala nada nos jogadores. Se for preciso, faz-se um
+   mod cliente separado a partilhar o mesmo ficheiro de configuração.
 5. **Suporte a 26.2/26.4:** o Loom multiversion é viável aqui ou ficamos só em 26.3?
-6. **Remoto GitHub:** o repositório **não tem `origin`** configurado — falta o URL para o
-   `auto-push` (o agente não inventa URLs).
-7. **Aceitação da EULA:** para o `runServer` completo é preciso o utilizador aceitar
-   `run/server/eula.txt`; o agente não o faz por ele.
+6. **Aceitação da EULA:** para a validação in-game é preciso o utilizador aceitar
+   `run/server/eula.txt`; o agente não o faz por ele. Comando:
+   `notepad run\server\eula.txt` → `eula=true`, depois `./gradlew runServer`.
 
-## 7. Log de decisões
+## 8. Log de decisões
 
 - **2026-10-08** — Confirmado que a 26.3 ainda usa o algoritmo de raios em
   `ServerExplosion#calculateExplodedPositions` (verificado no bytecode); a otimização faz
@@ -232,7 +265,7 @@ Outras confirmações relevantes:
      (D15). Corrigidos README e §2; o texto anterior dava crateras ~3,3× grandes demais.
   2. *Energia inicial* — `E0 = radius × (0.7 + 0.6 × rand)`. Corrigidos README e §2.
   3. *Aleatoriedade* — são **1352** sorteios por explosão; vamos consumi-los todos e usar a
-     média (D16). Corrigida a afirmação errada em §5.
+     média (D16). Corrigida a afirmação errada em §6.
   4. *Ordem/bloco central* — penalidade no bloco central e `add` só depois de subtrair a
      resistência, com `forca > 0`. Igual ao que o README já descrevia; confirmado.
 - **2026-10-08** — Corrigido o texto de fallback em todo o lado: para deixar o vanilla correr
@@ -247,4 +280,29 @@ Outras confirmações relevantes:
   loader); (3) JUnit 6.1.3 confirmado em Maven Central (D20).
 - **2026-10-08** — Escolhidos group/pacote `io.github.mateusrepo(.optimizedtnt)` (D19) e o
   `archivesName` ficou só `mod_id` (o Gradle já acrescenta a versão).
+- **2026-10-08** — **F1–F5 implementadas.** Três decisões de algoritmo que só apareceram ao
+  medir, não ao ler (D21–D23):
+  1. **A resistência é cobrada ao relaxar a aresta, não ao extrair o nó.** Com o custo no nó, a
+     fila fica ordenada pela energia *antes* da resistência enquanto a propagação usa a energia
+     *depois*: um nó com muita resistência sai cedo demais e volta a ser processado quando
+     aparece um caminho melhor — cada bloco era lido 2 a 3 vezes. Medido: `maxReads` por posição
+     passou de 3 para 1.
+  2. **Meia-folga de passo.** O vanilla amostra a face de entrada do bloco, não o centro, e um
+     bloco é registado se a energia chegar positiva a essa face. Sem a folga, a onda dava 499
+     blocos contra 796 do vanilla no ar (raio 4) — 37% mais pequena.
+  3. **Destruir ≠ propagar.** Num meio muito resistente o vanilla destrói o primeiro bloco com a
+     energia da *primeira* amostra, mesmo sem o atravessar. Com o modelo "pago o bloco inteiro
+     para propagar", a onda dava 1 bloco contra 10 do vanilla em pedra (raio 8). Separámos os
+     dois testes e os números passaram a bater.
+  - Também: `RandomSource` de 26.3 não implementa `RandomGenerator` → interface `FloatSource`
+    própria; `BlockPos.of(int,int,int)` não existe em 26.3 → `BlockPos.of(long)`; `level.random`
+    é `protected` → `level.getRandom()` (público); `isInWorldBounds` está em `Level` e não em
+    `BlockGetter`.
+- **2026-10-08** — **F6 (Mod Menu) descartada** ejustificada no README: um mod `server` não tem
+  onde mostrar UI.
+- **2026-10-08** — `options.encoding = 'UTF-8'` no build: sem isso o javac lê os fontes na
+  codificação da plataforma (cp1252 no Windows) e as mensagens de log com acentos saem
+  corrompidas.
+- **2026-10-08** — `build.gradle` deixou de declarar `org.spongepowered:mixin:0.8.5` (inexistente
+  nos repositórios do Loom; o 0.8.7 vem pelo loader) e deixou de usar `loom.mixin`/refmap.
 - **2026-10-08** — Adicionados `AGENTS.md`, `opencode.json`, `.gitignore` e 10 skills de opencode em `.opencode/skills/` (auto-commit, auto-push, progress-tracking, fabric-mod-setup, gradle-build-verify, mixin-explosion, wavefront-algorithm, unit-testing-parity, benchmark-optimization, release-github). Pontos a corrigir no plano identificados em `AGENTS.md` (resistência, energia inicial, aleatoriedade, fallback).
