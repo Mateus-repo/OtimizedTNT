@@ -49,18 +49,35 @@ corrente de TNT isso multiplica-se e atira o tick do servidor abaixo dos 20 TPS.
 
 Em vez de disparar 1352 raios e deixar que se cruzem, expandimos a partir do centro uma
 frente que guarda, para cada bloco, a **energia restante**. A energia usa exatamente as
-unidades do vanilla, para maximizar a paridade:
+unidades do vanilla (unidades `strength`).
+
+O truque para manter a paridade é perceber que **no vanilla ambos os custos são proporcionais
+ao comprimento do caminho percorrido**, e não ao número de blocos:
+
+- o travelling custa `0.225` por amostra de `0.3` de comprimento → **`0.75` por unidade de
+  comprimento**;
+- a resistência custa `(r + 0.3) × 0.3` por amostra de `0.3` → **`(r + 0.3)` por unidade de
+  comprimento dentro do bloco**.
+
+Isto é independente da direção do raio: um raio diagonal gasta o mesmo *por unidade de
+comprimento*, só que atravessa mais blocos. Logo a onda pode avançar bloco a bloco com:
 
 | Evento | Custo (unidades vanilla) |
 |---|---|
-| Avançar 1 bloco no eixo X/Y/Z | `0.75` (= `0.225` por passo de `0.3`) |
-| Avançar 1 bloco na diagonal de face (`√2`) | `1.0607` |
-| Avançar 1 bloco na diagonal de canto (`√3`) | `1.2990` |
-| Entrar num bloco com resistência `r` | `−(r + 0.3) × 0.3` |
-| Energia inicial | `radius × (1 + 0.42 × random.nextFloat())` |
+| Percorrer comprimento `L` (viagem) | `0.75 × L` |
+| Atravessar resistência `r` no mesmo comprimento `L` | `(r + 0.3) × L × resistanceFactor` |
+| — eixo X/Y/Z | `L = 1` |
+| — diagonal de face | `L = √2 ≈ 1.4142` |
+| — diagonal de canto | `L = √3 ≈ 1.7321` |
+| Energia inicial | `radius × (0.7 + 0.6 × random.nextFloat())` |
+
+`resistanceFactor` vale `1.0` por omissão (o valor que reproduz o vanilla em médias) e existe
+para compensar os casos em que o vanilla só amostra 1–2 vezes dentro de um bloco (efeito
+"corner clipping"), que a onda não reproduz.
 
 Um bloco é registado quando, **após** subtrair a resistência, a energia ainda é `> 0` e
-`shouldBlockExplode(...)` devolve `true` — exatamente a semântica do vanilla.
+`shouldBlockExplode(...)` devolve `true` — exatamente a semântica do vanilla, incluindo a
+penalidade aplicada ao bloco central.
 
 Consequências:
 
@@ -72,6 +89,10 @@ Consequências:
 - Fila de prioridade própria (bucket queue / algoritmo de Dial, sem `log n`), mapa de visitados
   com chaves `BlockPos` empacotadas em `long` e cache de resistência por `BlockState` — o
   `getBlockState` só é chamado para nós que são realmente processados.
+- **A sequência aleatória do servidor não muda.** O vanilla sorteia `nextFloat()` **1352 vezes
+  por explosão** (um por raio) e esse consumo é observável por qualquer outro sistema. O mod
+  consome exatamente os mesmos 1352 valores e usa a **média** como energia única
+  (`randomnessMode: MEAN`), pelo que replays e seeds continuam reprodutíveis.
 
 ## Diferenças face ao vanilla (honestidade)
 
@@ -108,6 +129,8 @@ Ficheiro `config/optimizedtnt.json` (guardado automaticamente):
   "scope": "TNT_ONLY",
   "algorithm": "WAVEFRONT",
   "neighborhood": 26,
+  "resistanceFactor": 1.0,
+  "randomnessMode": "MEAN",
   "cacheBlockResistance": true,
   "metrics": false
 }
@@ -119,8 +142,10 @@ Ficheiro `config/optimizedtnt.json` (guardado automaticamente):
 | `scope` | `TNT_ONLY` / `ALL_EXPLOSIONS` | Só TNT (`PrimedTnt` / `MinecartTNT`) ou todas as explosões (creepers, wind charges, end crystals, beds, etc.). |
 | `algorithm` | `WAVEFRONT` / `RAY_CACHE` / `VANILLA` | `WAVEFRONT` é o novo; `RAY_CACHE` mantém os raios mas memoiza blocos já visitados (mais fiel, mais lento); `VANILLA` desliga a substituição. |
 | `neighborhood` | `6` / `18` / `26` | Vizinhança da expansão. Mais alto = mais fiel e mais rápido. |
-| `cacheBlockResistance` | `true` / `false` | Cache da resistência por `BlockState`. |
-| `metrics` | `true` / `false` | Log de contadores (blocos visitados, amostras vanilla equivalente) para benchmark. |
+| `resistanceFactor` | float `≥ 0` | Multiplicador do custo de resistência. `1.0` reproduz o vanilla em média; valores menores explosões crateras maiores. Ajustar com `/optimizedtnt compare`. |
+| `randomnessMode` | `MEAN` / `PER_DIRECTION` | `MEAN` usa a média dos 1352 sorteios do vanilla (uma energia para toda a explosão). `PER_DIRECTION` agrupa os sorteios por direção, aproximando a variação angular do vanilla. Ambos consomem os 1352 valores. |
+| `cacheBlockResistance` | `true` / `false` | Cache da resistência por `BlockState` (só quando o calculador é o vanilla conhecido). |
+| `metrics` | `true` / `false` | Log de contadores (blocos visitados, amostras vanilla equivalentes) para benchmark. |
 
 ### Comandos (sem Fabric API)
 
@@ -131,8 +156,9 @@ Ficheiro `config/optimizedtnt.json` (guardado automaticamente):
 | `/optimizedtnt save` | Grava o estado atual no JSON. |
 | `/optimizedtnt compare` | Executa os dois algoritmos na próxima explosão e loga o desvio (paridade). |
 
-Requer permissão nível 2 (op). Registados por mixin em `Commands`, logo não é preciso
-`fabric-command-api-v2`.
+Requer permissão de administrador. Em 26.x a API já não é `hasPermission(int)`: usa-se
+`Commands.LEVEL_ADMINS.check(source.permissions())`. Registados por mixin em `Commands`, logo
+não é preciso `fabric-command-api-v2`.
 
 ### Mod Menu (opcional)
 
@@ -156,8 +182,9 @@ src/main/java/…/optimizedtnt/
 ```
 
 Ponto único de mixin: `ServerExplosion#calculateExplodedPositions`. O `@Inject` só cancela
-quando a otimização está ativa **e** o escopo faz match; caso contrário devolve `null` e o
-vanilla corre intacto. `ServerLevel`, `center`, `radius` e `damageCalculator` são acessados
+quando a otimização está ativa **e** o escopo faz match; caso contrário **não cancela** e o
+vanilla corre intacto (não usar `setReturnValue(null)`, que devolveria `null` e partiria
+`interactWithBlocks`). `ServerLevel`, `center`, `radius` e `damageCalculator` são acessados
 por `@Shadow`, por isso **não é necessário access widener**.
 
 ## Build
