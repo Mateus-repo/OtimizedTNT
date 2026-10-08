@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "id": "optimizedtnt",
+  "version": "${version}",
+  "name": "Optimized TNT",
+  "description": "${description}",
+  "authors": [
+    "${author}"
+  ],
+  "contact": {
+    "sources": "https://github.com/Mateus-repo/OtimizedTNT",
+    "issues": "https://github.com/Mateus-repo/OtimizedTNT/issues"
+  },
+  "license": "${license}",
+  "environment": "server",
+  "entrypoints": {
+    "main": [
+      "io.github.mateusrepo.optimizedtnt.OptimizedTnt"
+    ]
+  },
+  "mixins": [
+    "optimizedtnt.mixins.json"
+  ],
+  "depends": {
+    "fabricloader": ">=${loader_version}",
+    "minecraft": "~${minecraft_version}",
+    "java": ">=${java_version}"
+  }
+}

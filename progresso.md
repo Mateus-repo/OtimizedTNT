@@ -3,7 +3,8 @@
 Documento de trabalho: planeamento, decisões tomadas, tarefas e riscos.
 O README é para o utilizador final; este ficheiro é o plano técnico e o registo de progresso.
 
-**Estado global:** planeamento concluído, implementação por iniciar.
+**Estado global:** plano corrigido com o bytecode da 26.3 (4 pontos pendentes resolvidos);
+**F0 em curso**.
 Última atualização: 2026-10-08
 
 ---
@@ -99,20 +100,24 @@ Outras confirmações relevantes:
 
 | # | Decisão | Porquê |
 |---|---|---|
-| D1 | Mixin único em `calculateExplodedPositions` (`@At("HEAD")`, `cancellable`) | Ponto único de falha; fallback para vanilla é trivial (`cir.setReturnValue(null)`) |
+| D1 | Mixin único em `calculateExplodedPositions` (`@At("HEAD")`, `cancellable`) | Ponto único de falha; o fallback para o vanilla é um `return` sem cancelar |
 | D2 | `@Shadow` nos campos `level/center/radius/damageCalculator` | Evita access widener e acesso por reflexão |
 | D3 | `TNT_ONLY` por omissão | Alvo declarado: TNT. Menor risco de alterar gameplay de outros mecanismos |
 | D4 | Reutilizar `ExplosionDamageCalculator` em vez de reimplementar resistência | Compatibilidade com mods/plugins que customizem explosões |
-| D5 | Energia em unidades vanilla (0.75 por bloco, `(r+0.3)*0.3` por resistência) | Paridade numérica direta, mais fácil de validar |
-| D6 | Dijkstra com bucket queue (Dial), sem `PriorityQueue` | Custo `O(V)` em vez de `O(V log V)`; os custos são quase discretos (0.75/1.06/1.30) |
+| D5 | Energia em unidades vanilla, custos **por unidade de caminho** (D15) | Paridade numérica derivável em vez de aproximado |
+| D6 | Dijkstra com bucket queue (Dial), sem `PriorityQueue` | Custo `O(V)` em vez de `O(V log V)`; os custos são quase discretos |
 | D7 | `Long2FloatOpenHashMap` para visitados (chave = `BlockPos.asLong()`) | Sem alocação de `BlockPos` durante a expansão; fastutil já vem no Minecraft |
-| D8 | Só fazer `getBlockState` no nó *processado*, nunca por vizinho | O `Long2FloatOpenHashMap.containsKey` é a "barreira" barata antes da operação cara |
+| D8 | Só fazer `getBlockState` no nó *processado*, nunca por vizinho | O `containsKey` é a barreira barata antes da operação cara |
 | D9 | Cache de resistência por `BlockState` (identidade) | `getExplosionResistance` é constante por estado |
-| D10 | `neighborhood` configurável (6/18/26) | Compensação entre fidelidade e velocidade; permite dumb-down se o formato divergir demais |
-| D11 | Algoritmo `RAY_CACHE` como segunda opção | Plano B de alta fidelidade: mantém os 1352 raios mas memoiza blocos já amostrados |
+| D10 | `neighborhood` configurável (6/18/26) | Compensação entre fidelidade e velocidade |
+| D11 | Algoritmo `RAY_CACHE` como segunda opção | Plano B de maior fidelidade |
 | D12 | Comando por mixin em `Commands` | Evitar `fabric-command-api-v2` (requisito: sem Fabric API) |
 | D13 | Mod Menu com `modCompileOnly` + guarda `isModLoaded` | Zero risco no servidor dedicado; o jar não declara dependência |
 | D14 | Métricas desligadas por omissão | Overhead zero por omissão |
+| D15 | Resistência cobrada **por unidade de comprimento**, `L × 0.75` (viagem) e `L × (r + 0.3) × resistanceFactor` (resistência) | No vanilla os dois custos são proporcionais ao comprimento percorrido (`0.225`/`0.3` e `(r+0.3)×0.3`/`0.3`), logo o modelo correto é por caminho e não por bloco. `resistanceFactor = 1.0` é exato para raios axiais em média |
+| D16 | Consumir os **1352** `nextFloat()` do vanilla e usar a média (`MEAN`) | O consumo do RNG do servidor é observável; 1 único sorteio mudaria replays/seeds. `PER_DIRECTION` fica configurável |
+| D17 | Permissões via `Commands.LEVEL_ADMINS.check(src.permissions())` | `hasPermission(int` não existe em 26.x |
+| D18 | Fallback = `return` sem `cir.setReturnValue(...)` | `setReturnValue(null)` cancela o método e devolveria `null`, partindo `interactWithBlocks` |
 
 ## 4. Fases / tarefas
 
@@ -177,7 +182,7 @@ Outras confirmações relevantes:
 | Conflito com outro mod que mixine `calculateExplodedPositions` | Crash ou duplo cálculo | Detetar se outro mixin já injetou no mesmo ponto (log) e desligar a otimização com aviso |
 | Quebra em versões futuras da 26.x | Mod deixa de carregar | Alvo `26.3` estrito no `fabric.mod.json`; mixin `require = 1` para falhar cedo e claramente |
 | Chunk não carregado / `isInWorldBounds` | Exceções | Reutilizar o check vanilla antes de qualquer acesso ao mundo |
-| Determinismo entre servidores | Replays/difis de seed | `random.nextFloat()` continua a ser chamado **uma vez por explosão**, com o mesmo consumo da sequência → não altera a sequência aleatória do RNG do servidor |
+| Determinismo entre servidores | Replays/difis de seed | O vanilla consome **1352** `nextFloat()` por explosão; o mod consome exatamente os mesmos 1352 (D16). Mesmo assim a **forma** da cratera não é bit-a-bit igual à do vanilla — é o custo aceite de trocar raios por uma onda |
 | Overhead do cache de resistência | Memória | Cache pequeno (limite de N entradas, ex. 4096) ou `WeakHashMap` por identidade |
 
 ## 6. Perguntas em aberto
@@ -202,4 +207,19 @@ Outras confirmações relevantes:
 - **2026-10-08** — Sem Fabric API: comandos via mixin em `Commands`, config via Gson.
 - **2026-10-08** — Mojmap em vez de Yarn (o que está disponível em cache é Mojmap e é o
   que o outro repo 26.3 do utilizador usa).
+- **2026-10-08** — **Resolvidos os 4 pontos pendentes** com `javap -p -c` sobre
+  `minecraft-common-deobf-26.3.jar`:
+  1. *Escala da resistência* — o custo é **por unidade de caminho**, não por bloco
+     (D15). Corrigidos README e §2; o texto anterior dava crateras ~3,3× grandes demais.
+  2. *Energia inicial* — `E0 = radius × (0.7 + 0.6 × rand)`. Corrigidos README e §2.
+  3. *Aleatoriedade* — são **1352** sorteios por explosão; vamos consumi-los todos e usar a
+     média (D16). Corrigida a afirmação errada em §5.
+  4. *Ordem/bloco central* — penalidade no bloco central e `add` só depois de subtrair a
+     resistência, com `forca > 0`. Igual ao que o README já descrevia; confirmado.
+- **2026-10-08** — Corrigido o texto de fallback em todo o lado: para deixar o vanilla correr
+  **não se cancela** o `@Inject` (D18); `setReturnValue(null)` devolveria `null` e partiria
+  `interactWithBlocks`.
+- **2026-10-08** — Confirmado que `hasPermission(int)` **não existe** em 26.3; as permissões
+  passaram a `PermissionSet`/`PermissionCheck` (D17). O `CommandsMixin` tem de usar
+  `Commands.LEVEL_ADMINS.check(src.permissions())`.
 - **2026-10-08** — Adicionados `AGENTS.md`, `opencode.json`, `.gitignore` e 10 skills de opencode em `.opencode/skills/` (auto-commit, auto-push, progress-tracking, fabric-mod-setup, gradle-build-verify, mixin-explosion, wavefront-algorithm, unit-testing-parity, benchmark-optimization, release-github). Pontos a corrigir no plano identificados em `AGENTS.md` (resistência, energia inicial, aleatoriedade, fallback).
