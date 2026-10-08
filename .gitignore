@@ -1,0 +1,36 @@
+# Gradle
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+
+# Loom / Minecraft
+run/
+.fabric/
+remappedSrc/
+*.log
+hs_err_pid*
+
+# IDEs
+.idea/
+*.iml
+.vscode/
+.classpath
+.project
+.settings/
+bin/
+out/
+
+# SO
+.DS_Store
+Thumbs.db
+
+# Segredos (nunca commitar)
+.env
+.env.*
+*.pem
+*.key
+local.properties
+
+# opencode (estado local; as skills em .opencode/skills/ SÃO versionadas)
+.opencode/node_modules/
+.opencode/*.lock
