@@ -24,6 +24,9 @@ out/
 .DS_Store
 Thumbs.db
 
+# Scripts de teste in-game (logs)
+run_server.log
+
 # Segredos (nunca commitar)
 .env
 .env.*
