@@ -156,9 +156,17 @@ Write-Host "terreno de teste reconstruido com sucesso"
 
 Phase 'A) VANILLA (otimização desligada)' @('optimizedtnt off', 'optimizedtnt metrics on')
 Phase 'B) WAVEFRONT' @('optimizedtnt on', 'optimizedtnt algorithm wavefront', 'optimizedtnt metrics on')
-Phase 'C) RAY_CACHE' @('optimizedtnt algorithm ray_cache', 'optimizedtnt metrics on')
+Phase 'C) RAY_CACHE (default)' @('optimizedtnt algorithm ray_cache', 'optimizedtnt metrics on')
 
-Send @('stop') 600
+# D) HIBRIDO: com raio 4 (a TNT) e limiar 8 tem de dar o mesmo que a WAVEFRONT; com limiar 2
+# tem de dar o mesmo que o RAY_CACHE. Se algum destes blocos nao bater, a escolha por raio
+# esta errada.
+Phase 'D1) HIBRIDO com limiar 8 (raio 4 -> onda)' @('optimizedtnt algorithm hybrid',
+    'optimizedtnt hybrid_radius 8', 'optimizedtnt metrics on')
+Phase 'D2) HIBRIDO com limiar 2 (raio 4 -> ray cache)' @('optimizedtnt hybrid_radius 2',
+    'optimizedtnt metrics on')
+
+Send @('optimizedtnt algorithm ray_cache', 'optimizedtnt hybrid_radius 8', 'stop') 600
 Start-Sleep -Seconds 10
 if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
 
