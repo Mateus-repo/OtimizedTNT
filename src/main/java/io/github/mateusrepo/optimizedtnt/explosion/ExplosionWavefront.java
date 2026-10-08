@@ -110,7 +110,14 @@ public final class ExplosionWavefront {
                 firstSample += (stored + Neighborhood.RESISTANCE_BIAS)
                         * (1.0F - Neighborhood.STEP_LENGTH) * factor;
             }
-            if (firstSample > 0.0F && probe.shouldExplode(x, y, z, firstSample)) {
+            // O vanilla devolve um Set, por isso nunca repete posições. A onda trabalha com
+            // uma lista e, sem este guarda, um nó melhorado depois de sair da fila apareceria
+            // duas vezes — o que faria o mesmo bloco ser destruído duas vezes (drops
+            // duplicados) e falsearia as contagens.
+            if (firstSample > 0.0F
+                    && !ws.emitted.contains(packed)
+                    && probe.shouldExplode(x, y, z, firstSample)) {
+                ws.emitted.put(packed, 1.0F);
                 sink.accept(packed);
                 accepted++;
             }
@@ -221,11 +228,14 @@ public final class ExplosionWavefront {
 
         final DistanceMap distances = new DistanceMap(INITIAL_CAPACITY);
         final FloatMap resistances = new FloatMap(INITIAL_CAPACITY);
+        /** Posições já registadas no sink, para a lista não ter repetidos. */
+        final FloatMap emitted = new FloatMap(INITIAL_CAPACITY);
 
         void begin() {
             size = 0;
             distances.nextGeneration();
             resistances.nextGeneration();
+            emitted.nextGeneration();
         }
 
         /**
@@ -469,6 +479,11 @@ public final class ExplosionWavefront {
         float get(long key) {
             int index = index(key);
             return stamps[index] == generation ? values[index] : ABSENT;
+        }
+
+        /** @return {@code true} se a chave existir na geração atual. */
+        boolean contains(long key) {
+            return stamps[index(key)] == generation;
         }
 
         void put(long key, float value) {

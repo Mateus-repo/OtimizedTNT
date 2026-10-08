@@ -83,9 +83,16 @@ public final class OptimizedTntCommand {
 
         if (config.isMetrics()) {
             reply(ctx, String.format(Locale.ROOT,
-                    "§7métricas: §f%d explosões, §f%.1f blocos e §f%.0f leituras por explosão, §f%.1f µs por explosão",
+                    "§7métricas: §f%d explosões otimizadas, §f%.1f blocos e §f%.0f leituras por explosão, §f%.1f µs por explosão",
                     ExplosionMetrics.explosions(), ExplosionMetrics.averageBlocks(),
                     ExplosionMetrics.averageReads(), ExplosionMetrics.averageMicros()));
+            reply(ctx, String.format(Locale.ROOT,
+                    "§7vanilla: §f%d explosões, §f%.1f blocos e §f%.1f µs por explosão%s",
+                    ExplosionMetrics.vanillaExplosions(), ExplosionMetrics.vanillaAverageBlocks(),
+                    ExplosionMetrics.vanillaAverageMicros(),
+                    ExplosionMetrics.speedup() > 0.0
+                            ? String.format(Locale.ROOT, " §8(§f%.1f×§8 mais rápido com a onda§8)", ExplosionMetrics.speedup())
+                            : ""));
         } else {
             reply(ctx, "§7métricas desligadas (usa §f/optimizedtnt metrics on§7)");
         }
