@@ -48,31 +48,52 @@ Confirmado contra `SubtleEffects-26.3` e contra o jar desofuscado de 26.3 em cac
   `net.minecraft.world.entity.vehicle.minecart.MinecartTNT`, `WindCharge`
 - Toolchain: Java 25, Loom `1.18-SNAPSHOT`, fabric-loader `0.19.5`
 
-### Algoritmo vanilla 26.3 (lido do bytecode, para paridade)
+### Algoritmo vanilla 26.3 (confirmado no bytecode)
 
 ```
 raios: 16³ − 14³ = 1352 (só a casca: pelo menos um eixo em {0, 15})
 dir   = normaliza(i/15*2−1, j/15*2−1, k/15*2−1)
-forca = (radius + 0.7 * random.nextFloat() * 0.6) * radius      // radius * (1 + 0.42*rand)
+forca = radius * (0.7 + 0.6 * random.nextFloat())     // ← confirmado; UM nextFloat por raio
 while (forca > 0):
     pos = BlockPos.containing(x, y, z)
-    if !level.isInWorldBounds(pos): break
-    estado = getBlockState(pos); fluido = getFluidState(pos)
+    state = getBlockState(pos); fluido = getFluidState(pos)
+    if !level.isInWorldBounds(pos): ABORTA o raio inteiro
     res = damageCalculator.getBlockExplosionResistance(...)      // Optional<Float>
-    if res.isPresent(): forca -= (res + 0.3) * 0.3
+    if res.isPresent(): forca -= (res + 0.3) * 0.3   // ← penalidade ANTES do teste
     if forca > 0 && damageCalculator.shouldBlockExplode(..., forca): set.add(pos)
     x += dir*0.3; y += dir*0.3; z += dir*0.3
-    forca -= 0.225
-retorna new ObjectArrayList<>(set)                              // it.unimi.dsi.fastutil
+    forca -= 0.225                                  // ← por amostra de 0.3
+retorna new ObjectArrayList<>(set)                  // it.unimi.dsi.fastutil
 ```
 
-Notas importantes para a implementação:
-- A penalidade de resistência aplica-se **ao entrar** no bloco (incluindo o bloco central).
+**Os 4 pontos pendentes do `AGENTS.md`, resolvidos com `javap -p -c` (ver §7):**
+
+| Ponto | Conclusão |
+|---|---|
+| 1. Escala da resistência | A penalidade é `(r + 0.3) × 0.3` **por amostra de 0.3 de comprimento**, não por bloco. Como os dois custos são proporcionais ao comprimento percorrido, o modelo passa a ser **por unidade de caminho**: viagem `0.75 × L`, resistência `(r + 0.3) × L × resistanceFactor`. Num raio axial dá `(r + 0.3)` por bloco — confirma a intuição da skill, mas o `(r + 0.3) × 0.3` por bloco do texto antigo dava crateras ~3,3× maiores. |
+| 2. Energia inicial | `E0 = radius × (0.7 + 0.6 × random.nextFloat())`. Tanto o README antigo (`radius × (1 + 0.42×rand)`) como o pseudo-código anterior (`(radius + 0.7*rand*0.6) * radius`) estavam errados. Para raio 4: `E0 ∈ [2.8, 5.2]`. |
+| 3. Aleatoriedade | O `nextFloat()` é chamado **1352 vezes por explosão** (1 por raio). Para não alterar a sequência do RNG do servidor, o mod consome os mesmos 1352 valores e usa a **média** (`randomnessMode: MEAN`); `PER_DIRECTION` fica como opção. O §5 afirmava que 1 sorteio não alterava o RNG — **estava errado**, corrigido em D16. |
+| 4. Ordem e bloco central | A penalidade **é** aplicada ao bloco central (o raio começa por o amostrar) e o `set.add` só acontece **depois** de subtrair a resistência, com teste `forca > 0`. Ordem: penalidade → teste de energia → `shouldBlockExplode` → `add`. |
+
+Outras confirmações relevantes:
+
+- Fora dos limites do mundo **aborta o raio inteiro** (não é só saltar o bloco).
 - O `set` é um `HashSet` → **a ordem do vanilla não é determinística**; a nossa também não
   precisa de ser. `interactWithBlocks` não ordena.
-- `hurtEntities()` corre **depois** do cálculo dos blocos → pode tocar em blocos já
-  alterados; comportamento vanilla preservado porque não mexemos nessa parte.
+- `hurtEntities()` corre **depois** do cálculo dos blocos → comportamento vanilla preservado
+  porque não mexemos nessa parte.
 - Só `ServerExplosion` calcula posições no servidor; o cliente só faz partículas/som.
+- `BlockPos.asLong(int, int, int)` existe → mapa de visitados sem alocar `BlockPos`.
+- `Level.isInWorldBounds(BlockPos)` é o método a usar.
+
+### Comandos e permissões em 26.3 (confirmado)
+
+- `net.minecraft.commands.Commands` — construtor `Commands(CommandSelection, CommandBuildContext)`,
+  dispatcher obtido por `getDispatcher()`; registar o literal no `@Inject` do construtor (RETURN).
+- `CommandSourceStack.permissions()` → `net.minecraft.server.permissions.PermissionSet`.
+- `PermissionCheck.check(PermissionSet)`; constantes prontas em `Commands`:
+  `LEVEL_ALL`, `LEVEL_MODERATORS`, `LEVEL_GAMEMASTERS`, `LEVEL_ADMINS`, `LEVEL_OWNERS`.
+- **Não existe** `hasPermission(int)` em 26.x → usar `Commands.LEVEL_ADMINS.check(src.permissions())`.
 
 ## 3. Decisões de design
 
