@@ -1,4 +1,4 @@
-# Benchmark de explosões, sem jogadores (headless), com terreno idêntico em todas as
+﻿# Benchmark de explosões, sem jogadores (headless), com terreno idêntico em todas as
 # medições.
 #
 # Porquê uma TNT de cada vez (e não cascatas): para comparar algoritmos é preciso que
@@ -13,6 +13,9 @@
 #  - forceload da área toda, senão os `fill` falham com "That position is not loaded"
 #    depois de o servidor estar a correr há uns minutos;
 #  - cada `fill` fica bem abaixo do limite de 32768 blocos por comando;
+#  - a função que mede uma ronda chama-se Measure-Round e não Measure: `measure` é um alias
+#    do PowerShell para Measure-Command, e os aliases têm precedência sobre as funções — com
+#    o nome Measure a função nunca era chamada e o script corria vazio (0 explosões, sem erro).
 #  - as métricas do mod medem os DOIS lados: o tempo do vanilla é registado mesmo com a
 #    otimização desligada, por isso uma única sessão dá a comparação completa. Com a
 #    otimização ligada o lado vanilla fica a 0, porque o código vanilla não corre.
@@ -20,9 +23,10 @@
 # Uso:  powershell -NoProfile -ExecutionPolicy Bypass -File tools\explosion-benchmark.ps1
 
 param(
-    [int]$Rounds = 25,       # explosões medidas por algoritmo
+    [int]$Rounds = 120,      # explosões medidas por algoritmo
     [int]$Half = 4,          # meia-largura da plataforma de teste (janela de 9x9)
-    [int]$SettleSeconds = 6  # segundos a esperar pela detonação + assentamento
+    [int]$Checkpoint = 40,   # de quantas em quantas rondas se lê o estado das métricas
+    [int]$SettleMs = 900     # espera entre invocar a TNT e a detonação (fuse:0 = tick seguinte)
 )
 
 $root = Split-Path -Parent $PSScriptRoot
@@ -107,23 +111,24 @@ function Reset-Terrain {
 }
 
 # Uma explosão medida: terreno novo, uma TNT no centro, espera pela detonação.
-function Measure([int]$round) {
+function Measure-Round([int]$round) {
     Reset-Terrain
-    Send @('summon minecraft:tnt 0.5 -57.5 0.5') 100
-    Start-Sleep -Seconds $SettleSeconds
-    if ($round % 5 -eq 0) {
-        $log = Get-Content "$root\run_server.log" -Raw -ErrorAction SilentlyContinue
-        $explosions = ([regex]::Matches($log, '\d+ explos')).Count
-        $notLoaded = ([regex]::Matches($log, 'That position is not loaded')).Count
-        Write-Host ("  round {0}/{1} (linhas de métrica: {2}, fills falhados: {3})" -f `
-                    $round, $Rounds, $explosions, $notLoaded)
+    # fuse:0 = detona no tick seguinte, por isso a espera é de milissegundos e não de 4 s
+    # (a TNT normal tem um pavio de 80 ticks). Sem isto o benchmark demoraria 10x mais.
+    Send @('summon minecraft:tnt 0.5 -57.5 0.5 {fuse:0}') 120
+    Start-Sleep -Milliseconds $SettleMs
+    if ($round % $Checkpoint -eq 0) {
+        Send @('optimizedtnt status') 500
+        $notLoaded = ([regex]::Matches((Get-Content "$root\run_server.log" -Raw -ErrorAction SilentlyContinue),
+                                       'That position is not loaded')).Count
+        Write-Host ("  round {0}/{1} (fills falhados no total: {2})" -f $round, $Rounds, $notLoaded)
     }
 }
 
 function Phase([string]$title, [string[]]$setup) {
     Write-Host "--- $title ---"
     Send $setup 600
-    for ($i = 1; $i -le $Rounds; $i++) { Measure $i }
+    for ($i = 1; $i -le $Rounds; $i++) { Measure-Round $i }
     Send @('optimizedtnt status') 600
 }
 
@@ -137,7 +142,12 @@ if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force -ErrorAction Silent
 
 Write-Host ""
 Write-Host "==================== RESUMO ===================="
-Select-String -Path "$root\run_server.log" -Pattern 'm.tricas:|vanilla:|Algoritmo|That position' |
-    ForEach-Object { ($_.Line -replace '.*System chat: ', '') }
+# O log é UTF-8 e o console do Windows não é: limpar os códigos de cor (§a, §7, §f) e
+# imprimir só as linhas úteis, senão metade não bate com o padrão (os acentos).
+$logLines = [System.IO.File]::ReadAllLines("$root\run_server.log", [System.Text.Encoding]::UTF8)
+foreach ($line in $logLines) {
+    $clean = ($line -replace '.*System chat: ', '') -replace '§.', ''
+    if ($clean -match 'tricas: |vanilla: |Algoritmo|enabled=|That position') { $clean }
+}
 Write-Host "=================================================="
 Write-Host "Log completo em run_server.log"
