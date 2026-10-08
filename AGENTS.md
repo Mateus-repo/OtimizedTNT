@@ -16,7 +16,10 @@ blocos**. Detalhes para o utilizador final em `README.md`; plano técnico, decis
 | **Fabric API** | **Não usar** (comandos por mixin em `Commands`, config por Gson) |
 | Licença | MIT |
 
-Estado atual: planeamento concluído, **implementação por iniciar** (só existe documentação).
+Estado atual: **implementado e validado** (F0–F5, F7 parcial). 22 testes unitários verdes,
+paridade exacta do `RAY_CACHE` verificada, medições em `README.md` e `docs/benchmarks.md`.
+Medir sempre com números reais: o harness tem ruído de ±60% nos casos pequenos e a sonda em
+memória **subestima** o custo do mundo real.
 
 ## Estrutura prevista
 
@@ -86,12 +89,32 @@ Limites do fluxo automático:
 - Sem remoto `origin` configurado: perguntar o URL ao utilizador.
 - Em caso de dúvida ou conflito inesperado: parar e perguntar.
 
-## Pontos conhecidos a corrigir no plano
+## Pontos que o plano deixou em aberto — todos resolvidos
 
-Documentados em detalhe nas skills `wavefront-algorithm` e `mixin-explosion`; resolver e registar em
-`progresso.md` antes de implementar o núcleo:
+Resolvidos com `javap -p -c` sobre o jar desofuscado da cache do Loom, e registados em
+`progresso.md` §8 (não voltar a adivinhar nomes nem fórmulas):
 
-1. Escala da penalidade de resistência (vanilla: por amostra de 0.3 → ≈ `r+0.3` por bloco).
-2. Fórmula da energia inicial (README, progresso e vanilla divergem).
-3. Aleatoriedade: o vanilla sorteia por raio (1352×); o plano usa um valor por explosão.
-4. Fallback para o vanilla = **não cancelar**, e não `setReturnValue(null)`.
+1. Escala da penalidade de resistência: é **por unidade de caminho**, não por bloco. Um bloco é
+   atravessado por ~3,3 amostras de 0,3, o que dá `(r + 0.3)` por bloco.
+2. Energia inicial: `radius × (0.7 + 0.6 × random.nextFloat())`.
+3. Aleatoriedade: o vanilla sorteia **1352 vezes** por explosão; o mod consome as 1352 para não
+   perturbar a sequência do `RandomSource` e usa a média.
+4. Fallback para o vanilla: **não cancelar** o `@Inject`; nunca `setReturnValue(null)`.
+
+Confirmados com `javap` e que valem para qualquer trabalho futuro: `BlockPos.of(int,int,int)` não
+existe em 26.3 (usar `BlockPos.of(long)`), `level.random` é `protected` (usar `getRandom()`),
+`isInWorldBounds` está em `Level` e não em `BlockGetter`, permissões são
+`Commands.LEVEL_ADMINS.check(src.permissions())`, e `RandomSource` não implementa
+`java.util.random.RandomGenerator` (daí a interface `FloatSource`).
+
+## Medir: regras
+
+- Números só com método: aquecer a variante, reportar o **mínimo de várias rondas**, e dizer o
+  ruído. A média deu resultados contraditórios (1,8× entre chamadas).
+- O harness (`WavefrontBenchmark`) usa a **sonda densa**; com `TestProbe` (HashMap<Long,Float>) o
+  boxing mascara o algoritmo.
+- Para comparar algoritmos **in-game**, cada explosão tem de acontecer em terreno idêntico:
+  reconstruir o terreno antes de cada uma e uma TNT de cada vez. Cascatas de TNTs coladas medem
+  crateras diferentes em cada fase e não servem para nada.
+- Não afirmar "nunca é mais rápido/mais lento" sem medir: já falhou uma vez
+  (a onda **é** mais lenta que o vanilla em ar aberto com raio ≥ 8, 0,74×).
