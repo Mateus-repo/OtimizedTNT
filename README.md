@@ -77,7 +77,7 @@ E dois detalhes que vieram da leitura do bytecode e que fazem muita diferença:
   mesmo sem conseguir atravessá-lo. A onda distingue "destruir" (basta a primeira amostra) de
   "propagar" (é preciso atravessar).
 
-### Resultados medidos
+### Resultados medidos em testes
 
 Valores de `./gradlew test`, com grelha em memória e energia fixa (comparação determinística):
 
@@ -87,6 +87,20 @@ Valores de `./gradlew test`, com grelha em memória e energia fixa (comparação
 | Raio 8, no ar | 5 136 → 4 963 | 48 672 → **4 963** | **9,8×** |
 | Raio 6, terra | — | 22 984 → **855** | **27×** |
 | Raio 8, pedra | 10 → 1 | 5 408 → **27** | **200×** |
+
+### Resultados medidos dentro do jogo
+
+Servidor 26.3 real, TNT de raio 4 numa plataforma de terra, com `/optimizedtnt compare`
+(que corre os dois algoritmos na mesma explosão e mede os dois):
+
+| Algoritmo | Blocos (vanilla → otimizado) | Só vanilla / só otimizado | Tempo (vanilla → otimizado) | Ganho |
+|---|---|---|---|---|
+| `WAVEFRONT` vizinhança 26 | 133 → 226 | 0 / 93 | 6 536 µs → **474 µs** | **13,8×** |
+| `WAVEFRONT` vizinhança 6 | 27 → 23 | 12 / 8 | 567 µs → **39 µs** | 14,2× |
+| `RAY_CACHE` | 133 → 133, 27 → 27, 31 → 31 | **0 / 0** | 3 817 µs → 3 370 µs | 1,1× |
+
+O `compare` confirma que **`RAY_CACHE` dá sempre paridade exacta**, e que a `WAVEFRONT` é nunca
+*mais pequena* que o vanilla com vizinhança 26 ou 18 — só **maior**.
 
 Ou seja: o número de leituras de bloco deixa de crescer com o número de raios e passa a crescer
 só com o volume da cratera.
@@ -110,8 +124,26 @@ As causas, todas compreensíveis:
 - numa diagonal a resistência é cobrada uma vez por bloco em vez de ser repartida pelos blocos
   que o passo atravessa.
 
+Em terreno plano isto é visível: a cratera da onda fica **notavelmente maior** (na medição
+in-game, 133 → 226 blocos). Com `neighborhood: 6` a forma fica muito mais próxima da do vanilla
+(27 → 23), ao preço de deixar alguns blocos por destruir — o que num servidor costuma ser pior do
+que uma cratera um pouco maior.
+
 Tudo o resto (fogo, drops, decay, entity damage, knockback, `getHitPlayers`) continua a ser
 tratado pelo código vanilla intacto: o mod só substitui **quais** blocos são afetados.
+
+### Qual configuração usar
+
+| Prioridade | Configuração |
+|---|---|
+| Crateras **idênticas** ao vanilla | `algorithm: "RAY_CACHE"` — paridade exacta verificada, ~1,1× a 1,9× mais rápido |
+| Máxima performance, cratera maior | `algorithm: "WAVEFRONT"` + `neighborhood: 26` (predefinição) |
+| Cratera mais parecida, sem perder blocos | `algorithm: "WAVEFRONT"` + `neighborhood: 18` |
+| Afinar o tamanho da cratera | `resistanceFactor`: `1.15`–`1.3` encolhe a cratera |
+
+A predefinição é `WAVEFRONT` + `26` porque o objectivo do mod é performance e o
+`scope: TNT_ONLY` já limita o alcance do qualquer mudança. Quem não aceitar crateras maiores
+muda para `RAY_CACHE` num comando, sem reiniciar.
 
 **Se preferires paridade exacta a velocidade**, usa `algorithm: "RAY_CACHE"`: mantém os 1352
 raios do vanilla mas memoriza a resistência por bloco, o que dá **resultado idêntico** ao vanilla
@@ -233,9 +265,12 @@ de leituras de bloco.
 Feito e verificado: F0 (build), F1 (config), F2 (núcleo + testes de paridade), F3 (mixin +
 adaptador), F4 (comandos), F5 (RAY_CACHE).
 
-Pendente: validação dentro do jogo (as crateras reais, `/optimizedtnt compare` num TNT, e
-medição de MSPT com `spark`). Requer que a EULA de `run/server/eula.txt` seja aceite — o que só
-o dono do servidor pode fazer. Detalhes e próximos passos em [`progresso.md`](progresso.md).
+Verificado **dentro do jogo** (servidor 26.3 real, TNT com `/optimizedtnt compare`): os mixins
+aplicam-se, a onda e o `RAY_CACHE` correm, o comando responde e as métricas registam. Os números
+estão nas tabelas acima.
+
+Pendente: medição de impacto no MSPT/TPS com `spark` em cascatas grandes de TNT, e cenários mais
+variados in-game (obsidiana, água, end crystal). Os scripts de teste ficaram em `tools/`.
 
 **Mod Menu**: não incluído. Este mod é `environment: "server"` e uma ecrã de configuração só
 existe no cliente; para um servidor não é necessário instalar nada nos jogadores. Se for preciso,

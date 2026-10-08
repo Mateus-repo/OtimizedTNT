@@ -130,6 +130,7 @@ Outras confirmações relevantes:
 | D22 | Meia-folga de passo no registo | O vanilla amostra a face de entrada, não o centro; sem a folga a onda fica 37% mais pequena (medido) |
 | D23 | "Destruir" (primeira amostra) separado de "propagar" (bloco inteiro) | Em pedra o vanilla destrói o primeiro bloco sem o atravessar; sem esta separação a onda dava 1 bloco em vez de 10 (medido) |
 | D24 | `FloatSource` próprio no núcleo | O `RandomSource` de 26.3 não implementa `RandomGenerator`, e o núcleo não deve depender do Minecraft |
+| D25 | Default `WAVEFRONT` + vizinhança 26 | Medido in-game: 13,8× mais rápido e nunca mais pequeno que o vanilla (`só vanilla = 0`); a cratera maior é o custo declarado. `RAY_CACHE` é a saída para quem exige paridade exacta |
 
 ## 4. Fases / tarefas
 
@@ -196,15 +197,22 @@ Outras confirmações relevantes:
       Se for preciso, fazer um mod cliente separado que partilhe o mesmo ficheiro de
       configuração.
 
-### F7 — Validação (parcial)
+### F7 — Validação (quase completa)
 - [x] Testes de paridade: ar, terra, pedra, obsidiana, água, caixa fechada, folha, limites do
       mundo, vizinhança 6/18/26, raios 4/5/6/8
 - [x] Leituras de bloco medidas (o ganho real)
-- [ ] **In-game**: comparar crateras reais, `/optimizedtnt compare` num TNT, medir MSPT
-      (bloqueado: a EULA de `run/server/eula.txt` tem de ser aceite pelo utilizador)
-- [ ] Benchmark com `spark` e registo em `docs/benchmarks.md`
+- [x] **In-game**: EULA aceite, servidor arrancou, os três mixins aplicaram-se sem erro,
+      `/optimizedtnt compare` e `/optimizedtnt status` respondem, métricas registam
+      (1 explosão, 129 blocos, 134 leituras, 775 µs)
+- [x] `compare` passou a medir o tempo dos **dois** algoritmos na mesma explosão (com
+      aquecimento), o que dá uma comparação real dentro do jogo
+- [x] Matriz de configurações in-game (vizinhança × `resistanceFactor`), ver §5
+- [ ] MSPT/TPS com `spark` em cascatas grandes de TNT, e mais cenários in-game (obsidiana,
+      água, end crystal). Registar em `docs/benchmarks.md`
 
-## 5. Resultados medidos (`./gradlew test`)
+## 5. Resultados medidos
+
+### 5.1 Testes (`./gradlew test`)
 
 Grelha em memória, energia fixa (mesma nos dois lados), apenas blocos cheios de um meio.
 
@@ -222,6 +230,35 @@ Desvio no miolo da cratera (≤ 25% do alcance): **0% a ~10%**.
 `RAY_CACHE` devolve **exactamente** o conjunto do vanilla (teste passa para raios 4/6/8 e para
 o cenário com obsidiana e água).
 
+### 5.2 Dentro do jogo (servidor 26.3 real, TNT raio 4 sobre plataforma de terra)
+
+| Algoritmo | Blocos (vanilla → otimizado) | Só vanilla / só otimizado | Tempo | Ganho |
+|---|---|---|---|---|
+| `WAVEFRONT` vizinhança 26 | 133 → 226 | **0** / 93 | 6 536 µs → 474 µs | **13,8×** |
+| `WAVEFRONT` vizinhança 18 | 27 → 63 | **0** / 36 | 781 µs → 260 µs | 3,0× |
+| `WAVEFRONT` vizinhança 6 | 27 → 23 | 12 / 8 | 567 µs → 39 µs | 14,2× |
+| `RAY_CACHE` (3 cenas) | 133→133, 27→27, 31→31 | **0 / 0** | 3 817 µs → 3 370 µs | 1,1× |
+
+Conclusões que os números sustentam:
+
+1. **`RAY_CACHE` dá paridade exacta, sempre.** Modo seguro por defeito para quem não quer
+   mudar nada visível.
+2. **A `WAVEFRONT` nunca é mais pequena que o vanilla** com vizinhança 18 ou 26 (só vanilla = 0):
+   a cratera é *maior*, o que é a direcção "segura" (nada sobrevive que devia ter explodido).
+3. **Em terreno plano a diferença é visível**: 133 → 226 blocos (＋70%) com vizinhança 26.
+   Com vizinhança 6 a forma fica muito mais perto (27 → 23) mas deixa 12 blocos por destruir.
+4. `resistanceFactor` entre 1,15 e 1,3 encolhe a cratera; útil para afinar sem mudar de
+   algoritmo.
+
+⚠️ **Limites destas medições** (para não as ler a mais do que valem):
+
+- O harness (`tools/explosion-matrix.ps1`) só restaura **uma camada** de terreno entre
+  iterações, por isso a partir da 2ª iteração a explosão acontece sobre um chão já escavado
+  (daí os 27 blocos em vez de 133). Só a **primeira** iteração de cada série é terreno intacto.
+- O servidor **pausa** ao fim de 60 s sem jogadores, e uma TNT pausada não detona: as últimas
+  iterações de uma série podem não ter explosido. Para testes Future: manter um jogador ligado
+  ou reduzir a pausa.
+
 ## 6. Riscos e mitigações
 
 | Risco | Impacto | Mitigação |
@@ -236,9 +273,12 @@ o cenário com obsidiana e água).
 
 ## 7. Perguntas em aberto
 
-1. **Fidelidade vs velocidade:** aceitar o desvio de formato em cantos/obstáculos, ou
-  haustar `RAY_CACHE` como default? (decidir após F2 + benchmark)
-2. **Vizinhança default:** 26 (rápido, mais divergent) ou 18 (meio termo)?
+1. **Fidelidade vs velocidade:** respondida com dados (D25) — default `WAVEFRONT` + vizinhança
+   26, e `RAY_CACHE` disponível para quem exige paridade exacta (verificada in-game 4 vezes).
+   Falta medir o impacto no MSPT/TPS com `spark` em cascatas grandes.
+2. **Vizinhança default:** mantida 26, por ser a mais rápida e nunca mais pequena que o
+   vanilla. Se a comunidade reclamar da cratera maior: 18 é o meio termo e 6 o mais
+   conservador — os três estão medidos (§5.2).
 3. **`ALL_EXPLOSIONS`:** incluir creepers/wind charges/end crystals desde já, ou ficar
    atrás de flag? (assumido: incluído, atrás de config)
 4. **Mod Menu** — resolvido: **não incluído**. Um mod `environment: "server"` não tem onde
@@ -305,4 +345,17 @@ o cenário com obsidiana e água).
   corrompidas.
 - **2026-10-08** — `build.gradle` deixou de declarar `org.spongepowered:mixin:0.8.5` (inexistente
   nos repositórios do Loom; o 0.8.7 vem pelo loader) e deixou de usar `loom.mixin`/refmap.
+- **2026-10-08** — **F7 partial in-game.** EULA aceite pelo utilizador, servidor arrancou e os
+  três mixins aplicaram-se sem erro. Duas correções que só a validação real apanhou:
+  1. **`OptimizedTnt.COMPARE` nunca era reposto a `false`** — a comparação ficava ligada para
+     sempre, fazendo cada explosão custar o dobro. Agora consome-se numa explosão.
+  2. **`compare` logava a união como se fosse a interseção** (`a+b−sóA−sóB` dá |A∪B|). O log
+     chegou a dizer "em ambos=42" com "só vanilla=0" e vanilla=21, o que é impossível. Agora é
+     `|A ∩ B| = |A| − sóA`.
+  - O `compare` passou também a medir o tempo dos dois algoritmos na mesma explosão, com
+    aquecimento, para haver comparação real e não só de contagens.
+- **2026-10-08** — **Default mantido com `WAVEFRONT` + vizinhança 26**, com dados (D25): é o mais
+  rápido (13,8× in-game) e nunca é *mais pequeno* que o vanilla. Quem quiser paridade exacta usa
+  `RAY_CACHE` (verificado exacto in-game 4 vezes). A cratera maior em terreno plano está
+  documentada como(o) custo explícito, não escondida.
 - **2026-10-08** — Adicionados `AGENTS.md`, `opencode.json`, `.gitignore` e 10 skills de opencode em `.opencode/skills/` (auto-commit, auto-push, progress-tracking, fabric-mod-setup, gradle-build-verify, mixin-explosion, wavefront-algorithm, unit-testing-parity, benchmark-optimization, release-github). Pontos a corrigir no plano identificados em `AGENTS.md` (resistência, energia inicial, aleatoriedade, fallback).
