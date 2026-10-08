@@ -51,6 +51,8 @@ public abstract class ServerExplosionMixin {
 
         try {
             if (OptimizedTnt.COMPARE) {
+                // Uma explosão chega: comparar custa o dobro e não deve ficar ligado.
+                OptimizedTnt.COMPARE = false;
                 var center = self.center();
                 ExplosionComparator.compare(self, self.level(),
                         center.x, center.y, center.z, self.radius(),

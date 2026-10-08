@@ -7,6 +7,7 @@ import net.minecraft.world.level.Explosion;
 import net.minecraft.world.level.ExplosionDamageCalculator;
 
 import java.util.HashSet;
+import java.util.Locale;
 import java.util.Set;
 
 /**
@@ -42,27 +43,51 @@ public final class ExplosionComparator {
                 centerX, centerY, centerZ, radius, FIXED_RANDOM,
                 config.getNeighborhood(), config.getResistanceFactor());
 
-        Set<Long> vanilla = VanillaRayExplosion.compute(params, probe, FIXED_RANDOM);
+        Set<Long> vanilla;
+        long vanillaNanos;
+        {
+            // Aquecimento antes de medir, senão o primeiro algoritmo paga a JIT.
+            VanillaRayExplosion.compute(params, probe, FIXED_RANDOM);
+            long start = System.nanoTime();
+            vanilla = VanillaRayExplosion.compute(params, probe, FIXED_RANDOM);
+            vanillaNanos = System.nanoTime() - start;
+        }
 
         Set<Long> optimized = new HashSet<>();
-        if (config.getAlgorithm() == OptimizedTntConfig.Algorithm.RAY_CACHE) {
-            optimized.addAll(ExplosionRayCache.compute(params, probe, FIXED_RANDOM));
-        } else {
-            ExplosionWavefront.compute(params, probe, optimized::add);
+        long optimizedNanos;
+        {
+            runOptimized(config, params, probe, optimized);
+            optimized.clear();
+            long start = System.nanoTime();
+            runOptimized(config, params, probe, optimized);
+            optimizedNanos = System.nanoTime() - start;
         }
 
         Set<Long> onlyVanilla = new HashSet<>(vanilla);
         onlyVanilla.removeAll(optimized);
         Set<Long> onlyOptimized = new HashSet<>(optimized);
         onlyOptimized.removeAll(vanilla);
-        int both = vanilla.size() + optimized.size() - onlyVanilla.size() - onlyOptimized.size();
+        int both = vanilla.size() - onlyVanilla.size(); // |A ∩ B|; a subtração abaixo dá a união
 
         OptimizedTnt.LOGGER.info(
                 "[compare] vanilla={} otimizado={} em ambos={} só vanilla={} só otimizado={}"
-                        + " — algoritmo={} vizinhança={} fatorResistência={} raio={}",
+                        + " — algoritmo={} vizinhança={} fatorResistência={} raio={}"
+                        + " | vanilla={} µs, otimizado={} µs ({}×)",
                 vanilla.size(), optimized.size(), both,
                 onlyVanilla.size(), onlyOptimized.size(),
                 config.getAlgorithm(), config.getNeighborhood(),
-                config.getResistanceFactor(), radius);
+                config.getResistanceFactor(), radius,
+                vanillaNanos / 1000, optimizedNanos / 1000,
+                optimizedNanos == 0 ? "?" : String.format(Locale.ROOT, "%.1f",
+                        vanillaNanos / (double) optimizedNanos));
+    }
+
+    private static void runOptimized(
+            OptimizedTntConfig config, ExplosionParams params, BlockProbe probe, Set<Long> out) {
+        if (config.getAlgorithm() == OptimizedTntConfig.Algorithm.RAY_CACHE) {
+            out.addAll(ExplosionRayCache.compute(params, probe, FIXED_RANDOM));
+        } else {
+            ExplosionWavefront.compute(params, probe, out::add);
+        }
     }
 }
