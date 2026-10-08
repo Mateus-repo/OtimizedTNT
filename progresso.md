@@ -249,7 +249,30 @@ o cenário com obsidiana e água). No harness é **mais lento** que o vanilla (0
 a memorização custa uma consulta hash por amostra e a sonda é barata; in-game depende do custo
 real de `getBlockState`.
 
-### 5.2 Dentro do jogo (servidor 26.3 real, TNT raio 4 sobre plataforma de terra)
+### 5.2a Benchmark controlado (este é o que vale)
+
+`tools\explosion-benchmark.ps1`: 120 explosões **idênticas** por algoritmo, terreno reconstruído
+antes de cada uma (fill de ar + pedra + terra numa janela de 9x9), TNT com `{fuse:0}` 1,5 blocos
+acima da superfície, com `pause-when-empty-seconds=0` e forceload da área.
+
+| Algoritmo | Blocos/explosão | Leituras/explosão | µs/explosão (aos 40 / 80 / 120) |
+|---|---|---|---|
+| vanilla (mod desligado) | 622,6 | ~18 por raio | 2 207,6 / 1 839,6 / **1 718,5** |
+| `WAVEFRONT` v26 | 515,5 | **599** | 657,6 / 444,6 / **367,7** |
+| `RAY_CACHE` | 623,0 | 720 | 891,6 / 636,0 / **549,3** |
+
+**Ganhos: `WAVEFRONT` 4,7×, `RAY_CACHE` 3,1×.** Método completo e limites em `docs/benchmarks.md`.
+
+Três coisas que só esta medição mostrou:
+
+1. **O JIT domina as primeiras dezenas de explosões.** As médias caem de forma monótona; o
+   ganho da onda só estabiliza depois de ~100 explosões (3,4× aos 40, 4,7× aos 120).
+2. **No terreno de teste a onda é 17% mais pequena** (515,5 vs 622,6) — o oposto do que a tabela
+   antiga sugeria, porque aquela mediava em cima de uma cratera já aberta. Conclusão: **o sinal
+   do desvio depende do terreno**, não há regra única.
+3. **`RAY_CACHE` é 3,1× mais rápido que o vanilla in-game**, não 1,1× como se afirmava antes.
+
+### 5.2b Medições antigas (**não são comparáveis**, mantidas só por histórico)
 
 | Algoritmo | Blocos (vanilla → otimizado) | Só vanilla / só otimizado | Tempo | Ganho |
 |---|---|---|---|---|
@@ -258,16 +281,19 @@ real de `getBlockState`.
 | `WAVEFRONT` vizinhança 6 | 27 → 23 | 12 / 8 | 567 µs → 39 µs | 14,2× |
 | `RAY_CACHE` (3 cenas) | 133→133, 27→27, 31→31 | **0 / 0** | 3 817 µs → 3 370 µs | 1,1× |
 
-Conclusões que os números sustentam:
+Conclusões que as medições antigas davam, e o que mudou:
 
-1. **`RAY_CACHE` dá paridade exacta, sempre.** Modo seguro para quem não quer mudar nada visível.
+1. **`RAY_CACHE` dá paridade exacta, sempre.** Modo seguro para quem não quer mudar nada
+   visível. O `1,1×` da tabela acima é inválido (o terreno era diferente em cada fase): o número
+   certo é **3,1×**, medido em 5.2a.
 2. ⚠️ **A afirmação "a `WAVEFRONT` nunca é mais pequena que o vanilla" estava errada** e foi
    retirada do README e desta secção. Medido (vizinhança 26, desvio da contagem): ar −2,9% /
    −8,5% / −1,7% (raios 4/6/8), terra +44% / +22% / +23%, caverna +17% / +11% / +10%,
    pedra 0 / 0 / −86% (contagens de 1 a 7 blocos). No ar a onda é **mais pequena**; a diferença
    simétrica mostra que a *forma* também muda (17,4% em ar raio 8), concentrada na casca exterior.
-3. **Em terreno plano a diferença é visível**: 133 → 226 blocos (+70%) com vizinhança 26.
-   Com vizinhança 6 a forma fica muito mais perto (27 → 23) mas deixa 12 blocos por destruir.
+3. **O sinal do desvio depende do terreno**: a medição controlada (5.2a) dá −17% numa camada
+   fina de terra, e a antiga dava +70% numa cratera já aberta. Não há regra única, e é preciso
+   dizer isso ao utilizador em vez de prometer uma direcção.
 4. `resistanceFactor` entre 1,15 e 1,3 encolhe a cratera; útil para afinar sem mudar de
    algoritmo.
 

@@ -77,6 +77,10 @@ E dois detalhes que vieram da leitura do bytecode e que fazem muita diferença:
   mesmo sem conseguir atravessá-lo. A onda distingue "destruir" (basta a primeira amostra) de
   "propagar" (é preciso atravessar).
 
+### Resultados medidos
+
+Método, limites e todas as medições (incluindo as que não são favoráveis) em
+[`docs/benchmarks.md`](docs/benchmarks.md). Resumo:
 ### Resultados medidos em testes
 
 Valores de `./gradlew test` (`WavefrontBenchmark`), com sonda em memória e energia fixa.
@@ -111,14 +115,33 @@ Este harness tem ruído de ±60% nos casos pequenos (é um microbenchmark sem JM
 não partilhamProfile JIT); está registado o mínimo de 5 rondas por variante para o reduzir.
 E a sonda é um array: **subestima o custo real**, porque no jogo uma leitura de resistência é um
 `getBlockState` + `getExplosionResistance`, ordens de grandeza mais cara. Por isso as medições
-in-game abaixo são as que deciding.
+in-game abaixo são as que decidem.
 
 ### Resultados medidos dentro do jogo
 
-Servidor 26.3 real, com `/optimizedtnt metrics`, que mede os **dois lados** na mesma explosão
-(o tempo do vanilla é registado mesmo com a otimização activa).
+Servidor 26.3 real, **120 explosões idênticas por algoritmo**, com o terreno reconstruído antes
+de cada uma (uma camada de terra sobre pedra, TNT a detonar 1,5 blocos acima da superfície).
+As métricas do mod medem os dois lados; com a optimização ligada o lado vanilla fica a 0 porque
+o código vanilla não corre.
 
-MEDICAO_IN_GAME
+| Algoritmo | Blocos/explosão | Leituras/explosão | µs/explosão (aos 40 → 120) |
+|---|---|---|---|
+| **vanilla** (mod desligado) | 622,6 | ~18 por raio | 2 207,6 → **1 718,5** |
+| `WAVEFRONT` vizinhança 26 | 515,5 | **599** | 657,6 → **367,7** |
+| `RAY_CACHE` | 623,0 | 720 | 891,6 → **549,3** |
+
+**Ganhos: `WAVEFRONT` 4,7×, `RAY_CACHE` 3,1×.**
+
+Duas leituras honestas destes números:
+
+- **Metade do ganho só aparece depois do JIT aquecer.** As médias caem de forma monótona
+  (para o vanilla: 2 208 → 1 840 → 1 719 µs). Quem medir 10 explosões conclui que a onda é
+  3,4× e não 4,7× mais rápida, e mesmo aos 120 a média ainda desce — 4,7× é um piso, não um
+  tecto.
+- **A cratera da onda é mais pequena neste terreno** (515,5 contra 622,6, −17%), porque é uma
+  camada fina de terra. Em terreno com volume é o contrário: +10% a +44%. O `RAY_CACHE` dá
+  623,0 contra 622,6 — 0,06%, que é só a diferença entre usar a média dos 1352 sorteios como
+  energia e usar um sorteio por raio.
 
 Ou seja: o número de leituras de bloco deixa de crescer com o número de raios e passa a crescer
 só com o volume da cratera.
@@ -158,9 +181,12 @@ As causas, todas compreensíveis:
 - numa diagonal a resistência é cobrada uma vez por bloco em vez de ser repartida pelos blocos
   que o passo atravessa.
 
-Em terreno plano a cratera da onda fica **maior** (terra: +22% a +44%). Com `neighborhood: 6` a
-forma fica muito mais próxima da do vanilla, ao preço de deixar blocos por destruir (ar raio 8:
-5 047 → 2 047 blocos) — o que num servidor costuma ser pior do que uma cratera um pouco maior.
+Em terreno com volume a cratera da onda fica **maior** (terra: +22% a +44%). Numa camada fina, ao
+contrário: no benchmark in-game (uma camada de terra sobre pedra) a onda dá 515,5 blocos contra
+622,6 do vanilla, **−17%**. O sinal do desvio depende do terreno, e vale a pena dizer isso em vez
+de uma regra única. Com `neighborhood: 6` a forma fica mais próxima da do vanilla, ao preço de
+deixar blocos por destruir (ar raio 8: 5 047 → 2 047 blocos) — o que num servidor costuma ser pior
+do que uma cratera um pouco maior.
 
 Tudo o resto (fogo, drops, decay, entity damage, knockback, `getHitPlayers`) continua a ser
 tratado pelo código vanilla intacto: o mod só substitui **quais** blocos são afetados.
@@ -169,18 +195,22 @@ tratado pelo código vanilla intacto: o mod só substitui **quais** blocos são 
 
 | Prioridade | Configuração |
 |---|---|
-| Crateras **idênticas** ao vanilla | `algorithm: "RAY_CACHE"` — paridade exacta verificada, ~1,1× a 1,9× mais rápido |
-| Máxima performance, cratera maior | `algorithm: "WAVEFRONT"` + `neighborhood: 26` (predefinição) |
+| Crateras **idênticas** ao vanilla | `algorithm: "RAY_CACHE"` — 0,06% de diferença de blocos e **3,1× mais rápido** que o vanilla, medido in-game |
+| Máxima performance | `algorithm: "WAVEFRONT"` + `neighborhood: 26` (predefinição) — **4,7×** medido in-game |
 | Cratera mais parecida, sem perder blocos | `algorithm: "WAVEFRONT"` + `neighborhood: 18` |
 | Afinar o tamanho da cratera | `resistanceFactor`: `1.15`–`1.3` encolhe a cratera |
 
-A predefinição é `WAVEFRONT` + `26` porque o objectivo do mod é performance e o
-`scope: TNT_ONLY` já limita o alcance do qualquer mudança. Quem não aceitar crateras maiores
-muda para `RAY_CACHE` num comando, sem reiniciar.
+A predefinição é `WAVEFRONT` + `26` porque é o mais rápido dos três (4,7× contra 3,1× in-game) e
+porque o `scope: TNT_ONLY` limita o alcance da mudança. O custo é a cratera: em terreno com
+volume é 10% a 44% maior, em camadas finas 17% menor. **Quem quiser a cratera do vanilla sem
+pensar no assunto muda para `RAY_CACHE` num comando, sem reiniciar**, e só abdica de 1,5× de
+velocidade.
 
-**Se preferires paridade exacta a velocidade**, usa `algorithm: "RAY_CACHE"`: mantém os 1352
-raios do vanilla mas memoriza a resistência por bloco, o que dá **resultado idêntico** ao vanilla
-(também verificado por teste) com ~3× menos leituras de bloco.
+**Sobre o `RAY_CACHE`:** mantém os 1352 raios do vanilla e memoriza a resistência por bloco, o
+que dá resultado indistinguível do vanilla — 623,0 blocos contra 622,6 in-game, e o teste de
+paridade passa contra o oráculo vanilla — com **720 leituras de bloco por explosão** em vez das
+~18 por raio que o vanilla faz (24 336 por explosão para raio 4, medido no harness). É a opção
+para quem não quer ver crateras diferentes.
 
 ## Instalação (servidor vanilla com Fabric)
 
@@ -211,7 +241,7 @@ Na primeira vez é criado `config/optimizedtnt.json`.
 | `enabled` | `true` / `false` | Liga/desliga a otimização, sem reiniciar o servidor. |
 | `scope` | `TNT_ONLY` / `ALL_EXPLOSIONS` | Só TNT (`PrimedTnt` / `MinecartTNT`) ou todas as explosões (creepers, wind charges, end crystals, beds…). |
 | `algorithm` | `WAVEFRONT` / `RAY_CACHE` / `VANILLA` | `WAVEFRONT` é o novo; `RAY_CACHE` dá forma idêntica ao vanilla; `VANILLA` não substitui nada. |
-| `neighborhood` | `6` / `18` / `26` | Vizinhança da expansão. Mais alto = mais fiel e mais rápido. |
+| `neighborhood` | `6` / `18` / `26` | Vizinhança da expansão. Mais alto = mais fiel **e mais lento** (cada bloco relaxa 26 vizinhos em vez de 6). |
 | `resistanceFactor` | float `≥ 0` | Multiplicador do custo de resistência. `1.0` é o valor medido; valores menores dão explosões maiores. |
 | `randomnessMode` | `MEAN` / `PER_DIRECTION` | `MEAN` usa a média dos 1352 sorteios; `PER_DIRECTION` usa a média por tipo de direção. Ambos consomem os 1352 valores. |
 | `cacheBlockResistance` | `true` / `false` | Cache da resistência por `BlockState`, só quando o calculador é o vanilla conhecido. |

@@ -104,10 +104,17 @@ if (-not (WaitReady)) {
 $chunk = 16
 Send @("forceload add -$chunk -$chunk $chunk $chunk") 1500
 
+function Read-Log {
+    # O log esta preso pelo servidor em Windows: ReadAllText em UTF-8 em vez de Get-Content,
+    # que devolve null quando o ficheiro esta bloqueado.
+    try { [System.IO.File]::ReadAllText("$root\run_server.log", [System.Text.Encoding]::UTF8) } catch { '' }
+}
+
 function Reset-Terrain {
-    Send @("fill -$Half -59 -$Half $Half 10 minecraft:air",
-           "fill -$Half -60 -$Half $Half -60 minecraft:stone",
-           "fill -$Half -59 -$Half $Half -59 minecraft:dirt") 350
+    # Seis coordenadas: o fill precisa dos dois cantos completos (from x y z, to x y z).
+    Send @("fill -$Half -59 -$Half $Half 10 $Half minecraft:air",
+           "fill -$Half -60 -$Half $Half -60 $Half minecraft:stone",
+           "fill -$Half -59 -$Half $Half -59 $Half minecraft:dirt") 350
 }
 
 # Uma explosão medida: terreno novo, uma TNT no centro, espera pela detonação.
@@ -119,9 +126,10 @@ function Measure-Round([int]$round) {
     Start-Sleep -Milliseconds $SettleMs
     if ($round % $Checkpoint -eq 0) {
         Send @('optimizedtnt status') 500
-        $notLoaded = ([regex]::Matches((Get-Content "$root\run_server.log" -Raw -ErrorAction SilentlyContinue),
-                                       'That position is not loaded')).Count
-        Write-Host ("  round {0}/{1} (fills falhados no total: {2})" -f $round, $Rounds, $notLoaded)
+        $log = Read-Log
+        $errors = ([regex]::Matches($log, 'Expected |not loaded|Incorrect|Unknown')).Count
+        $filled = ([regex]::Matches($log, 'Filled ')).Count
+        Write-Host ("  round {0}/{1} (fills: {2}, erros de comando: {3})" -f $round, $Rounds, $filled, $errors)
     }
 }
 
@@ -131,6 +139,20 @@ function Phase([string]$title, [string[]]$setup) {
     for ($i = 1; $i -le $Rounds; $i++) { Measure-Round $i }
     Send @('optimizedtnt status') 600
 }
+
+# Falhar cedo e alto: se o terreno nao reconstruir, as rondas nao sao comparaveis e nao vale
+# a pena gastar 12 minutos a medir nada. (Ja aconteceu duas vezes: fills com 5 coordenadas
+# em vez de 6, respondendo "Expected integer", e o script seguia em silencio.)
+Reset-Terrain
+if ((Read-Log) -notmatch 'Filled ') {
+    Write-Host "ERRO: os fills de terreno nao responderam. As explosoes seriam medidas em"
+    Write-Host "      terreno ja escavado e nao ha nada a comparar. Corrige os fills e repete."
+    Send @('stop') 500
+    Start-Sleep 8
+    if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
+    exit 1
+}
+Write-Host "terreno de teste reconstruido com sucesso"
 
 Phase 'A) VANILLA (otimização desligada)' @('optimizedtnt off', 'optimizedtnt metrics on')
 Phase 'B) WAVEFRONT' @('optimizedtnt on', 'optimizedtnt algorithm wavefront', 'optimizedtnt metrics on')
