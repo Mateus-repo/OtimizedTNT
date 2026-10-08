@@ -2,7 +2,11 @@
   "required": true,
   "minVersion": "0.8",
   "package": "io.github.mateusrepo.optimizedtnt.mixin",
-  "mixins": [],
+  "mixins": [
+    "CommandsMixin",
+    "MinecraftServerMixin",
+    "ServerExplosionMixin"
+  ],
   "injectors": {
     "defaultRequire": 1
   }
