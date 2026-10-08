@@ -157,6 +157,58 @@ class WavefrontBenchmark {
         }
     }
 
+    /**
+     * Mede os três algoritmos lado a lado, que é a comparação que interessa para escolher o
+     * default.
+     */
+    @Test
+    void measureAllThree() {
+        System.out.println("== ONDA vs VANILLA vs RAY_CACHE (ns/explosao) ==");
+        System.out.printf(Locale.ROOT, "%-10s %-5s %10s %10s %10s %8s %8s%n",
+                "terreno", "raio", "vanilla", "ray_cache", "onda", "onda/van", "cache/van");
+        for (String terrain : new String[]{"ar", "terra", "pedra", "caverna"}) {
+            DenseProbe probe = switch (terrain) {
+                case "ar" -> new DenseProbe(160);
+                case "terra" -> new DenseProbe(160).fill(-40, 40, -40, 40, 88, 40, TestProbe.DIRT);
+                case "pedra" -> new DenseProbe(160).fill(-40, 40, -40, 40, 88, 40, TestProbe.STONE);
+                default -> cave();
+            };
+            for (float radius : new float[]{4.0F, 6.0F, 8.0F}) {
+                ExplosionParams p = params(radius, 26);
+                double vanilla = time(() -> ExplosionRayCaster.collect(p, probe, FIXED_RANDOM, false), 20);
+                double cache = time(() -> ExplosionRayCaster.collect(p, probe, FIXED_RANDOM, true), 20);
+                double wave = time(() -> run(p, probe), 200);
+                System.out.printf(Locale.ROOT, "%-10s %-5.0f %10.0f %10.0f %10.0f %8.2f %8.2f%n",
+                        terrain, radius, vanilla, cache, wave,
+                        vanilla / Math.max(1, wave), vanilla / Math.max(1, cache));
+            }
+        }
+    }
+
+    /**
+     * Tempo por operação, em nanossegundos.
+     *
+     * <p>Aquecer a variante antes de a medir (cada uma com o seu próprio aquecimento, senão a
+     * primeira fica a pagar a JIT) e ficar com o <strong>mínimo</strong> de várias rondas: a
+     * média é puxada para baixo por pausas do GC e pelo ruído do sistema, e a mínimo é o
+     * estimador mais estável para microbenchmarks sem JMH.
+     */
+    private static double time(Runnable action, int repetitions) {
+        for (int i = 0; i < repetitions * 5; i++) {
+            action.run();
+        }
+        double best = Double.MAX_VALUE;
+        for (int round = 0; round < 5; round++) {
+            long start = System.nanoTime();
+            for (int i = 0; i < repetitions; i++) {
+                action.run();
+            }
+            double average = (System.nanoTime() - start) / (double) repetitions;
+            best = Math.min(best, average);
+        }
+        return best;
+    }
+
     @Test
     void measureVanillaForReference() {
         System.out.println("== VANILLA (referencia) ==");

@@ -1,6 +1,7 @@
 package io.github.mateusrepo.optimizedtnt.explosion;
 
 import java.util.HashSet;
+import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import java.util.Set;
 
 /**
@@ -27,6 +28,8 @@ public final class ExplosionRayCaster {
     private ExplosionRayCaster() {
     }
 
+    private static final ThreadLocal<Memo> MEMO = ThreadLocal.withInitial(Memo::new);
+
     /**
      * Executa os raios.
      *
@@ -42,8 +45,19 @@ public final class ExplosionRayCaster {
             ExplosionSink sink,
             boolean memoize) {
 
-        Memo memo = memoize ? new Memo() : null;
-        Set<Long> seen = new HashSet<>();
+        // O Memo é reutilizado entre explosões (por thread): eram três arrays novos por
+        // explosão, sem necessidade — só a geração é que muda.
+        Memo memo = memoize ? MEMO.get() : null;
+        if (memo != null) {
+            memo.begin();
+        }
+        // O vanilla devolve um Set, por isso nunca repete posições. Um HashSet<Long> faz
+        // boxing de Long em CADA amostra que passa (dezenas de milhares por explosão), o que
+        // era boa parte do custo do modo RAY_CACHE; LongOpenHashSet é o mesmo conjunto sem
+        // qualquer alocação.
+        LongOpenHashSet seen = new LongOpenHashSet();
+        int registered = 0;
+
         double centerX = params.centerX();
         double centerY = params.centerY();
         double centerZ = params.centerZ();
@@ -86,9 +100,17 @@ public final class ExplosionRayCaster {
                         if (!Float.isNaN(resistance)) {
                             strength -= (resistance + 0.3F) * 0.3F;
                         }
-                        if (strength > 0.0F && probe.shouldExplode(bx, by, bz, strength)
-                                && seen.add(packed)) {
-                            sink.accept(packed);
+
+                        // Ver o set ANTES de perguntar shouldExplode: quase todas as amostras
+                        // caem em blocos já registados, e shouldExplode é uma chamada ao
+                        // mundo (getBlockState). O vanilla também só avalia uma vez por bloco,
+                        // porque o Set é o que decide o add.
+                        if (strength > 0.0F && !seen.contains(packed)) {
+                            if (probe.shouldExplode(bx, by, bz, strength)) {
+                                seen.add(packed);
+                                sink.accept(packed);
+                                registered++;
+                            }
                         }
 
                         x += vx * 0.3F;
@@ -99,7 +121,7 @@ public final class ExplosionRayCaster {
                 }
             }
         }
-        return seen.size();
+        return registered;
     }
 
     /** Versão para testes: devolve o conjunto e usa um valor aleatório fixo. */
@@ -140,6 +162,16 @@ public final class ExplosionRayCaster {
         private int mask = keys.length - 1;
         private int generation = 1;
         private int size;
+
+        /** Invalida o que ficou da explosão anterior sem percorrer a tabela. */
+        void begin() {
+            size = 0;
+            generation++;
+            if (generation == Integer.MAX_VALUE) {
+                java.util.Arrays.fill(stamps, 0);
+                generation = 1;
+            }
+        }
 
         float get(long key, BlockProbe probe, int x, int y, int z) {
             int index = index(key);
