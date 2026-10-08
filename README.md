@@ -142,7 +142,7 @@ Ficheiro `config/optimizedtnt.json` (guardado automaticamente):
 | `scope` | `TNT_ONLY` / `ALL_EXPLOSIONS` | Só TNT (`PrimedTnt` / `MinecartTNT`) ou todas as explosões (creepers, wind charges, end crystals, beds, etc.). |
 | `algorithm` | `WAVEFRONT` / `RAY_CACHE` / `VANILLA` | `WAVEFRONT` é o novo; `RAY_CACHE` mantém os raios mas memoiza blocos já visitados (mais fiel, mais lento); `VANILLA` desliga a substituição. |
 | `neighborhood` | `6` / `18` / `26` | Vizinhança da expansão. Mais alto = mais fiel e mais rápido. |
-| `resistanceFactor` | float `≥ 0` | Multiplicador do custo de resistência. `1.0` reproduz o vanilla em média; valores menores explosões crateras maiores. Ajustar com `/optimizedtnt compare`. |
+| `resistanceFactor` | float `≥ 0` | Multiplicador do custo de resistência. `1.0` reproduz o vanilla em média; valores menores dão explosões maiores. Ajustar com `/optimizedtnt compare`. |
 | `randomnessMode` | `MEAN` / `PER_DIRECTION` | `MEAN` usa a média dos 1352 sorteios do vanilla (uma energia para toda a explosão). `PER_DIRECTION` agrupa os sorteios por direção, aproximando a variação angular do vanilla. Ambos consomem os 1352 valores. |
 | `cacheBlockResistance` | `true` / `false` | Cache da resistência por `BlockState` (só quando o calculador é o vanilla conhecido). |
 | `metrics` | `true` / `false` | Log de contadores (blocos visitados, amostras vanilla equivalentes) para benchmark. |
@@ -193,15 +193,16 @@ por `@Shadow`, por isso **não é necessário access widener**.
 ./gradlew build          # ou  .\gradlew.bat build  no Windows
 ```
 
-Saída em `build/libs/optimizedtnt-1.0.0.jar`.
+Saída em `build/libs/optimizedtnt-1.0.0.jar` (o `-sources.jar` é ignorado na distribuição).
 
 | Componente | Versão |
 |---|---|
 | Minecraft | 26.3 |
-| Fabric Loom | 1.18-SNAPSHOT |
-| fabric-loader | 0.19.5 |
+| Fabric Loom | `1.18-SNAPSHOT` (resolve para **1.18.3**) |
+| fabric-loader | 0.19.5 (traz Mixin 0.8.7 e MixinExtras 0.5.5) |
 | Java toolchain | 25 |
-| mappings | Mojmap (sem `yarn` no Loom) |
+| mappings | Mojmap (oficiais, via `minecraft "com.mojang:minecraft:26.3"`) |
+| Testes | JUnit 6.1.3 |
 
 ## Como verificar que funciona
 

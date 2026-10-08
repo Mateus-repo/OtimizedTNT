@@ -4,7 +4,8 @@ Documento de trabalho: planeamento, decisões tomadas, tarefas e riscos.
 O README é para o utilizador final; este ficheiro é o plano técnico e o registo de progresso.
 
 **Estado global:** plano corrigido com o bytecode da 26.3 (4 pontos pendentes resolvidos);
-**F0 em curso**.
+**F0 concluída** (build e arranque verificados; falta o utilizador aceitar a EULA para o
+`runServer` completo). **F1 em curso.**
 Última atualização: 2026-10-08
 
 ---
@@ -47,7 +48,13 @@ Confirmado contra `SubtleEffects-26.3` e contra o jar desofuscado de 26.3 em cac
 - `net.minecraft.world.level.Level$ExplosionInteraction` → `NONE`, `BLOCK`, `MOB`, `TNT`, `TRIGGER`
 - Entidades: `net.minecraft.world.entity.item.PrimedTnt` (não existe `TntBlockEntity` em 26.3),
   `net.minecraft.world.entity.vehicle.minecart.MinecartTNT`, `WindCharge`
-- Toolchain: Java 25, Loom `1.18-SNAPSHOT`, fabric-loader `0.19.5`
+- Toolchain: Java 25, Loom `1.18-SNAPSHOT` (que resolve para **1.18.3**), fabric-loader `0.19.5`
+- Confirmado no arranque do `runServer`: Mixin **0.8.7** e MixinExtras **0.5.5** vêm
+  transitivamente pelo loader → **não** declarar `org.spongepowered:mixin` (a 0.8.5 nem existe
+  nos repositórios do Loom e faz o build falhar).
+- Loom 1.18 **já não usa `loom.mixin { defaultRefmapName }`** (aviso do próprio Loom: *"The
+  mixin annotation is no longer enabled by default"*). Removido o bloco `mixin` do `build.gradle`
+  e a chave `refmap` do `optimizedtnt.mixins.json`; o refmap não é gerado.
 
 ### Algoritmo vanilla 26.3 (confirmado no bytecode)
 
@@ -118,16 +125,25 @@ Outras confirmações relevantes:
 | D16 | Consumir os **1352** `nextFloat()` do vanilla e usar a média (`MEAN`) | O consumo do RNG do servidor é observável; 1 único sorteio mudaria replays/seeds. `PER_DIRECTION` fica configurável |
 | D17 | Permissões via `Commands.LEVEL_ADMINS.check(src.permissions())` | `hasPermission(int` não existe em 26.x |
 | D18 | Fallback = `return` sem `cir.setReturnValue(...)` | `setReturnValue(null)` cancela o método e devolveria `null`, partindo `interactWithBlocks` |
+| D19 | group `io.github.mateusrepo`, pacote `io.github.mateusrepo.optimizedtnt` | Identidade GitHub do utilizador (`Mateus-repo`); pacote neutro e publicável. **Confirmar com o utilizador** — mudar agora é trivial |
+| D20 | JUnit 6.1.3 (BOM) | Versão estável atual confirmada em Maven Central, não inventada |
 
 ## 4. Fases / tarefas
 
-### F0 — Ambiente (por fazer)
-- [ ] `settings.gradle` + `build.gradle` com Loom `1.18-SNAPSHOT`, sem Yarn (Mojmap)
-- [ ] `gradle.properties`: group, mod id, java 25, loader 0.19.5
-- [ ] `gradle wrapper` (usar o wrapper já existente noutros repos como base)
-- [ ] `fabric.mod.json`: `environment: "server"`, sem `fabric-api` em `depends`
-- [ ] `optimizedtnt.mixins.json` + `optimizedtnt.refmap.json`
-- [ ] Build limpo e `./gradlew runServer` a arrancar
+### F0 — Ambiente (concluída)
+- [x] `settings.gradle` + `build.gradle` com Loom `1.18-SNAPSHOT` (→1.18.3), sem Yarn (Mojmap)
+- [x] `gradle.properties`: mod id `optimizedtnt`, v1.0.0, Java 25, loader 0.19.5, MC 26.3
+- [x] Gradle wrapper copiado do repo 26.3 de referência (Gradle 9.8.0)
+- [x] `fabric.mod.json`: `environment: "server"`, sem `fabric-api` em `depends`
+- [x] `optimizedtnt.mixins.json` com `injectors.defaultRequire: 1` (sem `refmap`, sem
+      `compatibilityLevel` — não assumir; lista de mixins vazia até F3)
+- [x] Entry point `OptimizedTnt` (ModInitializer)
+- [x] `./gradlew build` verde → `build/libs/optimizedtnt-1.0.0.jar`, `fabric.mod.json`
+      expandido corretamente (versões reais, sem `${...}` literais)
+- [x] `./gradlew runServer`: Minecraft 26.3 + Loader 0.19.5 arrancam, o mod carrega
+      (*"Optimized TNT carregado"*) e o servidor para na EULA — **por desenho, a EULA não é
+      aceite pelo agente**; falta o utilizador a aceitar para poder testar o jogo
+- [ ] `runServer` completo (depende do utilizador aceitar `run/server/eula.txt`)
 
 ### F1 — Config (por fazer)
 - [ ] `OptimizedTntConfig` com Gson (já disponível no MC), defaults seguros
@@ -194,8 +210,11 @@ Outras confirmações relevantes:
    atrás de flag? (assumido: incluído, atrás de config)
 4. **Mod Menu:** vale a pena o `entrypoint client` num mod declarado `server`? Alternativa
    é não ter UI e só config por ficheiro + comando.
-5. **Nome/id definitivo:** `optimizedtnt`? (repo chama-se `OtimizedTNT`, com typo)
-6. **Suporte a 26.2/26.4:** o Loom multiversion é viável aqui ou ficamos só em 26.3?
+5. **Suporte a 26.2/26.4:** o Loom multiversion é viável aqui ou ficamos só em 26.3?
+6. **Remoto GitHub:** o repositório **não tem `origin`** configurado — falta o URL para o
+   `auto-push` (o agente não inventa URLs).
+7. **Aceitação da EULA:** para o `runServer` completo é preciso o utilizador aceitar
+   `run/server/eula.txt`; o agente não o faz por ele.
 
 ## 7. Log de decisões
 
@@ -222,4 +241,10 @@ Outras confirmações relevantes:
 - **2026-10-08** — Confirmado que `hasPermission(int)` **não existe** em 26.3; as permissões
   passaram a `PermissionSet`/`PermissionCheck` (D17). O `CommandsMixin` tem de usar
   `Commands.LEVEL_ADMINS.check(src.permissions())`.
+- **2026-10-08** — **F0 concluída.** Três correções ao plano da skill `fabric-mod-setup`:
+  (1) Loom 1.18 já não usa `loom.mixin`/refmap → removidos; (2) **não** declarar
+  `org.spongepowered:mixin:0.8.5` (não existe nos repositórios do Loom; o Mixin 0.8.7 vem pelo
+  loader); (3) JUnit 6.1.3 confirmado em Maven Central (D20).
+- **2026-10-08** — Escolhidos group/pacote `io.github.mateusrepo(.optimizedtnt)` (D19) e o
+  `archivesName` ficou só `mod_id` (o Gradle já acrescenta a versão).
 - **2026-10-08** — Adicionados `AGENTS.md`, `opencode.json`, `.gitignore` e 10 skills de opencode em `.opencode/skills/` (auto-commit, auto-push, progress-tracking, fabric-mod-setup, gradle-build-verify, mixin-explosion, wavefront-algorithm, unit-testing-parity, benchmark-optimization, release-github). Pontos a corrigir no plano identificados em `AGENTS.md` (resistência, energia inicial, aleatoriedade, fallback).
