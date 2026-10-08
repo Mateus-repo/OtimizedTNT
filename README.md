@@ -14,9 +14,10 @@ que cada bloco candidato é lido do mundo **uma única vez**.
 | mappings | Mojmap (oficiais) |
 | Licença | MIT |
 
-> Estado: funcional e com testes de paridade. A validação dentro do jogo (crateras reais, comando
-> `/optimizedtnt compare`) está pendente de aceitar a EULA — ver
-> [`progresso.md`](progresso.md).
+> Estado: funcional, com testes de paridade e medido dentro do jogo (120 explosões idênticas
+> por algoritmo): `WAVEFRONT` **4,7×** mais rápido que o vanilla, `RAY_CACHE` **3,1×** e com
+> crateras indistinguíveis das do vanilla. Métodos, números completos e limites em
+> [`docs/benchmarks.md`](docs/benchmarks.md).
 
 ---
 
