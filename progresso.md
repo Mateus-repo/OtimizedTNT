@@ -268,6 +268,21 @@ acima da superfície, com `pause-when-empty-seconds=0` e forceload da área.
 
 **Ganhos: `WAVEFRONT` 4,7×, `RAY_CACHE` 3,1×.** Método completo e limites em `docs/benchmarks.md`.
 
+**`HYBRID` validado in-game** (30 explosões; a contagem de blocos não depende do JIT):
+
+| Configuração | Blocos/explosão | Leituras | Leitura |
+|---|---|---|---|
+| `WAVEFRONT` | 515,0 | 599 | referência |
+| `RAY_CACHE` | 620,3 | 720 | referência |
+| `HYBRID`, limiar 8 (raio 4 < 8) | **514,5** | **599** | = WAVEFRONT ✓ |
+| `HYBRID`, limiar 2 (raio 4 ≥ 2) | **624,3** | **722** | = RAY_CACHE ✓ |
+
+Com o default novo, o arranque mostra `algorithm=RAY_CACHE, hybridMaxRadius=8.0`.
+
+Nota de método: a 60 rondas o `RAY_CACHE` ainda mede mais lento que a onda (1 005 µs contra
+563 µs) porque o JIT ainda está a aquecer; a 120 rondas inverte-se (549 µs contra 368 µs). Por
+isso os números de referência do README são os de 120 rondas.
+
 Três coisas que só esta medição mostrou:
 
 1. **O JIT domina as primeiras dezenas de explosões.** As médias caem de forma monótona; o

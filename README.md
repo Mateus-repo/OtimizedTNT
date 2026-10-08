@@ -390,7 +390,8 @@ explosões idênticas por algoritmo nas tabelas acima.
 
 Verificado **em teste** (sem Minecraft): paridade do `RAY_CACHE` com o oráculo vanilla em 800/800
 explosões com sorteios reais, em 4 terrenos; a onda nunca deixa por destruir um bloco do miolo que
-o vanilla destrói, em todos os cenários; e o `HYBRID` escolhe o algoritmo pelo raio.
+e o `HYBRID` escolhe o algoritmo pelo raio (validado in-game: com limiar 8 e uma TNT de
+raio 4 dá 514,5 blocos, igual à `WAVEFRONT`; com limiar 2 dá 624,3, igual ao `RAY_CACHE`).
 
 Pendente: MSPT/TPS com `spark` em cascatas grandes de TNT (o relatório do spark não é legível a
 partir do log), cenários in-game mais variados (obsidiana, água, end crystal), e um teste com um
