@@ -5,49 +5,43 @@ import java.util.Arrays;
 /**
  * Onda de blocos (Dijkstra) que substitui os 1352 raios do vanilla.
  *
- * <p>Em vez de disparar raios que se cruzam e avaliarem o mesmo bloco dezenas de vezes,
- * expande-se uma frente a partir do centro. Cada bloco é lido do mundo <strong>uma única
- * vez</strong> e propagado uma única vez.
+ * <p>Em vez de disparar raios que se cruzam, expande-se uma frente a partir do centro: cada
+ * bloco é lido do mundo <strong>uma vez</strong> e propagado uma vez.
  *
  * <p><b>Porque é que funciona como Dijkstra.</b> A resistência de um bloco é cobrada
  * <em>quando a aresta para ele é relaxada</em>, e não quando o nó sai da fila. Assim a chave
  * da fila é exatamente a energia que vai propagar, o custo de entrar num bloco depende só do
- * bloco (e do comprimento do passo, que é fixo para cada par vizinho), e a primeira vez que um
- * nó sai da fila é a definitiva. Se a resistência fosse cobrada à saída da fila, um nó com
- * muita resistência sairia cedo demais e voltaria a ser processado quando aparecesse um
- * caminho melhor — o mesmo bloco seria lido duas ou três vezes.
+ * bloco (e do comprimento do passo, fixo para cada par vizinho), e a primeira vez que um nó
+ * sai da fila é a definitiva. E a fila é um <strong>max-heap</strong>: o Dijkstra tem de
+ * extrair o nó com <em>mais</em> energia restante, porque é esse valor que decide até onde a
+ * onda chega. Um min-heap extrai o pior primeiro, e esse nó acaba por ser melhorado e
+ * processado outra vez — com 26 relaxamentos por cada vez (medido: churn de 5,9 em vez de 1,6).
  *
  * <p>Fidelidade ao vanilla, nas mesmas unidades de energia:
  * <ul>
  *   <li>viagem: {@code 0.75 × L} por passo de comprimento {@code L} (o vanilla perde
  *       {@code 0.225} por amostra de {@code 0.3});</li>
- *   <li>resistência: {@code (r + 0.3) × resistanceFactor} à entrada no bloco (o vanilla subtrai
- *       {@code (r + 0.3) × 0.3} por amostra de {@code 0.3}, e um bloco é atravessado por
- *       ~3.3 amostras, ou seja {@code (r + 0.3)} por bloco);</li>
+ *   <li>resistência: {@code (r + 0.3) × resistanceFactor} à entrada no bloco (o vanilla
+ *       subtrai {@code (r + 0.3) × 0.3} por amostra de {@code 0.3}, e um bloco é atravessado
+ *       por ~3.3 amostras, ou seja {@code (r + 0.3)} por bloco);</li>
  *   <li>meio passo de folga: o vanilla não amostra o centro do bloco mas a face por onde o raio
- *       entra, meio passo mais perto, por isso o bloco também é registado se ainda houver
- *       energia nessa face;</li>
- *   <li>registo: só com energia positiva e {@code shouldExplode} a aceitar, como no vanilla,
- *       incluindo o bloco central.</li>
+ *       entra, meio passo mais perto, e regista o bloco se ainda houver energia nessa face;</li>
+ *   <li>primeira amostra: num bloco muito resistente o vanilla destrói-o logo à primeira
+ *       amostra, mesmo sem conseguir atravessá-lo — por isso "destruir" e "propagar" são
+ *       testes diferentes.</li>
  * </ul>
  *
  * <p><strong>Desvios aceites:</strong> a onda chega a blocos "diagonalmente acessíveis" por onde
- * nenhum raio passa exatamente, e não atravessa diagonais isoladas (o vanilla também não);
+ * nenhum raio passa exactamente e não atravessa diagonais isoladas (o vanilla também não);
  * numa diagonal a resistência é cobrada uma vez por bloco em vez de ser repartida pelos
- * blocos que o passo atravessa, o que encolhe um pouco a cratera em terreno resistente. Por
- * isso o formato pode divergir nas bordas e em obstáculos finos — e {@code resistanceFactor}
- * existe para afinar isso.
+ * blocos que o passo atravessa. Medido: em ar a cratera é 2–8% mais pequena, em terra e
+ * caverna 10–23% maior, em pedra pode ser muito menor. O desvio é simétrico (o conjunto é
+ * subconjunto ou superconjunto, não fragmentado).
  */
 public final class ExplosionWavefront {
 
-    /** Capacidade inicial dos arrays de trabalho; crescem se for preciso. */
-    private static final int INITIAL_CAPACITY = 4096;
-
-    /** Valor sentinela que marca "fora dos limites do mundo". */
-    private static final float OUT_OF_BOUNDS = Float.POSITIVE_INFINITY;
-
-    /** Valor sentinela que marca "chave ausente" nos mapas de {@code float}. */
-    private static final float ABSENT = Float.NEGATIVE_INFINITY;
+    /** Capacidade inicial da fila; cresce se for preciso. */
+    private static final int INITIAL_CAPACITY = 1024;
 
     private static final ThreadLocal<Workspace> WORKSPACE = ThreadLocal.withInitial(Workspace::new);
 
@@ -66,22 +60,24 @@ public final class ExplosionWavefront {
         float faceCap = params.energyFor(Neighborhood.FACE);
         float cornerCap = params.energyFor(Neighborhood.CORNER);
 
-        Workspace ws = WORKSPACE.get();
-        ws.begin();
-
         int centerX = floor(params.centerX());
         int centerY = floor(params.centerY());
         int centerZ = floor(params.centerZ());
+
+        Workspace ws = WORKSPACE.get();
+        ws.begin(Math.max(axisCap, Math.max(faceCap, cornerCap)), centerX, centerY, centerZ);
+
+        ExplosionCells cells = ws.cells;
         long center = pack(centerX, centerY, centerZ);
 
         // O bloco central é cobrado como qualquer outro (o raio do vanilla também precisa de
         // ~3.3 amostras para o atravessar); só o registo usa a primeira amostra.
-        float centerResistance = ws.resistance(probe, center, centerX, centerY, centerZ);
-        if (centerResistance == OUT_OF_BOUNDS) {
-            return new Result(0, 0);
+        float centerCharge = chargeOf(probe, cells, center, centerX, centerY, centerZ);
+        if (Float.isNaN(centerCharge)) {
+            return new Result(0, 0); // fora do mundo
         }
-        float centerEnergy = axisCap - charge(centerResistance, 1.0F, factor);
-        ws.distances.put(center, centerEnergy);
+        float centerEnergy = axisCap - centerCharge * factor;
+        cells.improveEnergy(center, centerEnergy);
         ws.push(center, centerEnergy, 0.0F);
 
         int accepted = 0;
@@ -91,7 +87,7 @@ public final class ExplosionWavefront {
             float energy = ws.energy;
             float slack = ws.slack;
 
-            if (energy < ws.distances.get(packed)) {
+            if (energy < cells.energy(packed)) {
                 continue; // obsoleto: entretanto chegou energia melhor
             }
 
@@ -100,24 +96,20 @@ public final class ExplosionWavefront {
             int z = unpackZ(packed);
 
             // O vanilla não precisa de atravessar um bloco para o destruir: basta que o raio
-            // tenha energia na primeira amostra dentro dele. Entrada e registo usam portanto
-            // casos diferentes — à entrada cobramos a resistência do bloco inteiro (é o que
-            // decide a propagação), mas no registo só descontamos a primeira amostra, como o
-            // vanilla. A diferença devolvida aqui é essa.
-            float stored = ws.resistances.get(packed);
+            // tenha energia na primeira amostra dentro dele. À entrada cobramos a resistência
+            // do bloco inteiro (é o que decide a propagação), mas no registo só descontamos a
+            // primeira amostra, como o vanilla.
+            float stored = cells.charge(packed);
             float firstSample = energy + slack;
-            if (stored != ABSENT && !Float.isNaN(stored)) {
-                firstSample += (stored + Neighborhood.RESISTANCE_BIAS)
-                        * (1.0F - Neighborhood.STEP_LENGTH) * factor;
+            if (!Float.isNaN(stored)) {
+                firstSample += stored * (1.0F - Neighborhood.STEP_LENGTH);
             }
-            // O vanilla devolve um Set, por isso nunca repete posições. A onda trabalha com
-            // uma lista e, sem este guarda, um nó melhorado depois de sair da fila apareceria
-            // duas vezes — o que faria o mesmo bloco ser destruído duas vezes (drops
-            // duplicados) e falsearia as contagens.
+            // O vanilla devolve um Set, por isso nunca repete posições; a lista não repete por
+            // si só, e um bloco nunca pode ser destruído duas vezes (drops duplicados).
             if (firstSample > 0.0F
-                    && !ws.emitted.contains(packed)
+                    && !cells.isEmitted(packed)
                     && probe.shouldExplode(x, y, z, firstSample)) {
-                ws.emitted.put(packed, 1.0F);
+                cells.markEmitted(packed);
                 sink.accept(packed);
                 accepted++;
             }
@@ -143,31 +135,32 @@ public final class ExplosionWavefront {
                     continue; // o raio nem chegaria a tocar neste bloco
                 }
 
-                long neighbor = pack(x + hood.dx[i], y + hood.dy[i], z + hood.dz[i]);
-                // A resistência só pode baixar a energia, portanto se já há melhor não vale a
-                // pena sequer ler o bloco.
-                if (next <= ws.distances.get(neighbor)) {
-                    continue;
-                }
-
                 int nx = x + hood.dx[i];
                 int ny = y + hood.dy[i];
                 int nz = z + hood.dz[i];
-                float resistance = ws.resistance(probe, neighbor, nx, ny, nz);
-                if (resistance == OUT_OF_BOUNDS) {
+                long neighbor = pack(nx, ny, nz);
+
+                // A resistência só pode baixar a energia, portanto se já há melhor não vale a
+                // pena sequer ler o bloco.
+                float known = cells.energy(neighbor);
+                if (!Float.isNaN(known) && next <= known) {
                     continue;
                 }
 
-                // Destruir o bloco só exige energia na primeira amostra dentro dele; é
-                // preciso conseguir atravessá-lo para o propagar. Numa parede de pedra o
-                // vanilla destrói o primeiro bloco mesmo sem chegar ao segundo.
-                if (next + neighborSlack + charge(resistance, 0.7F, factor) <= 0.0F) {
+                float resistanceCharge =
+                        chargeOf(probe, cells, neighbor, nx, ny, nz);
+                if (Float.isNaN(resistanceCharge)) {
+                    continue; // fora dos limites do mundo
+                }
+                // Destruir o bloco só exige energia na primeira amostra dentro dele; é preciso
+                // conseguir atravessá-lo para o propagar. Numa parede de pedra o vanilla
+                // destrói o primeiro bloco mesmo sem chegar ao segundo.
+                if (next + neighborSlack + resistanceCharge * (1.0F - Neighborhood.STEP_LENGTH) <= 0.0F) {
                     continue;
                 }
-                next -= charge(resistance, 1.0F, factor);
+                next -= resistanceCharge * factor;
 
-                if (next > ws.distances.get(neighbor)) {
-                    ws.distances.put(neighbor, next);
+                if (cells.improveEnergy(neighbor, next)) {
                     ws.push(neighbor, next, neighborSlack);
                 }
             }
@@ -176,12 +169,55 @@ public final class ExplosionWavefront {
     }
 
     /**
+     * Meia-extensão da grelha que cobre o alcance máximo possível.
+     *
+     * <p>Cada passo custa pelo menos {@link Neighborhood#TRAVEL_PER_UNIT}, logo o número de
+     * passos a partir do centro é no máximo {@code energia / 0.75} e cada passo move no máximo
+     * uma célula por eixo. Duas células de margem cobrem a folga de meio passo.
+     */
+    private static int halfFor(float energy) {
+        return (int) Math.ceil(energy / Neighborhood.TRAVEL_PER_UNIT) + 2;
+    }
+
+    /** Escolhe grelha densa ou tabelas hash conforme o alcance cabe em memória. */
+    private static ExplosionCells cellsFor(float energy, int centerX, int centerY, int centerZ) {
+        int half = halfFor(energy);
+        if (DenseExplosionCells.fits(half)) {
+            return new DenseExplosionCells(half, centerX, centerY, centerZ);
+        }
+        return new HashExplosionCells();
+    }
+
+    /**
+     * Lê o custo de resistência de uma célula, uma vez por explosão.
+     *
+     * @return {@code (r + 0.3)}, {@code 0} para ar, ou {@link Float#NaN} fora do mundo
+     */
+    private static float chargeOf(
+            BlockProbe probe, ExplosionCells cells, long packed, int x, int y, int z) {
+        float cached = cells.charge(packed);
+        if (!Float.isNaN(cached)) {
+            return cached;
+        }
+        if (!probe.inBounds(x, y, z)) {
+            cells.putCharge(packed, Float.NaN);
+            return Float.NaN;
+        }
+        float resistance = probe.resistance(x, y, z);
+        float charge = Float.isNaN(resistance)
+                ? 0.0F
+                : resistance + Neighborhood.RESISTANCE_BIAS;
+        cells.putCharge(packed, charge);
+        return charge;
+    }
+
+    /**
      * Resultado de uma explosão.
      *
      * @param blocks     blocos registados (o que o vanilla devolveria num {@code Set})
-     * @param processed  nós que saíram da fila. Com a ordem correcta do Dijkstra é igual a
-     *                   {@code blocks} mais os nós que não puderam propagar; muito acima
-     *                   disso significa que a fila está a extrair pela ordem errada.
+     * @param processed  nós que saíram da fila, incluindo entradas obsoletas. Com a ordem
+     *                   correcta do Dijkstra é próximo de {@code blocks}; muito acima disso
+     *                   significa que a fila está a extrair pela ordem errada.
      */
     public record Result(int blocks, int processed) {
 
@@ -189,14 +225,6 @@ public final class ExplosionWavefront {
         public float churn() {
             return blocks == 0 ? 0.0F : processed / (float) blocks;
         }
-    }
-
-    /** Custo de resistência ao atravessar {@code length} de um bloco com resistência dada. */
-    private static float charge(float resistance, float length, float factor) {
-        if (Float.isNaN(resistance)) {
-            return 0.0F; // ar / fluido vazio: o vanilla devolve Optional.empty()
-        }
-        return (resistance + Neighborhood.RESISTANCE_BIAS) * length * factor;
     }
 
     // --- Empacotamento de posições, no mesmo formato de BlockPos.asLong ---
@@ -225,12 +253,7 @@ public final class ExplosionWavefront {
         return value < truncated ? truncated - 1 : truncated;
     }
 
-    /**
-     * Arrays de trabalho reutilizados entre explosões, por thread.
-     *
-     * <p>A fila é um min-heap binário sobre arrays primitivos (sem boxing) e os dois mapas
-     * usam contador de geração, para não ser preciso limpar as tabelas entre explosões.
-     */
+    /** Fila de prioridade binária sobre arrays primitivos, sem boxing. */
     private static final class Workspace {
 
         long[] positions = new long[INITIAL_CAPACITY];
@@ -244,37 +267,28 @@ public final class ExplosionWavefront {
         float energy;
         float slack;
 
-        final DistanceMap distances = new DistanceMap(INITIAL_CAPACITY);
-        final FloatMap resistances = new FloatMap(INITIAL_CAPACITY);
-        /** Posições já registadas no sink, para a lista não ter repetidos. */
-        final FloatMap emitted = new FloatMap(INITIAL_CAPACITY);
+        ExplosionCells cells;
+        private int cellsHalf = -1;
+        private int cellsCenterX;
+        private int cellsCenterY;
+        private int cellsCenterZ;
 
-        void begin() {
+        /** Recomeça a explosão, reutilizando a grelha se alcance e centro não mudaram. */
+        void begin(float energy, int centerX, int centerY, int centerZ) {
             size = 0;
             processed = 0;
-            distances.nextGeneration();
-            resistances.nextGeneration();
-            emitted.nextGeneration();
-        }
-
-        /**
-         * Lê a resistência de uma posição uma única vez por explosão.
-         *
-         * <p>Usa {@code -Infinity} como "chave ausente" porque o valor guardável {@code NaN}
-         * significa "ar" e é perfectamente válido.
-         */
-        float resistance(BlockProbe probe, long packed, int x, int y, int z) {
-            float cached = resistances.get(packed);
-            if (cached != ABSENT) {
-                return cached;
+            int half = halfFor(energy);
+            boolean same = cells instanceof DenseExplosionCells dense
+                    && dense.half() == half
+                    && centerX == cellsCenterX && centerY == cellsCenterY && centerZ == cellsCenterZ;
+            if (!same) {
+                cells = cellsFor(energy, centerX, centerY, centerZ);
+                cellsHalf = half;
+                cellsCenterX = centerX;
+                cellsCenterY = centerY;
+                cellsCenterZ = centerZ;
             }
-            if (!probe.inBounds(x, y, z)) {
-                resistances.put(packed, OUT_OF_BOUNDS);
-                return OUT_OF_BOUNDS;
-            }
-            float value = probe.resistance(x, y, z);
-            resistances.put(packed, value);
-            return value;
+            cells.begin();
         }
 
         void push(long packed, float energy, float slack) {
@@ -305,11 +319,8 @@ public final class ExplosionWavefront {
             }
         }
 
+        /** MAX-heap: o Dijkstra extrai o nó com mais energia restante. */
         private void siftUp(int index) {
-            // MAX-heap pela energia: o Dijkstra tem de extrair o nó com mais energia
-            // restante, porque é o que decide até onde a onda chega. Um min-heap extrai o
-            // pior primeiro, e esse nó acaba por ser melhorado e processado outra vez — o
-            // mesmo bloco várias vezes, com 26 relaxamentos por cada vez.
             while (index > 0) {
                 int parent = (index - 1) >>> 1;
                 if (energies[parent] >= energies[index]) {
@@ -349,234 +360,6 @@ public final class ExplosionWavefront {
             float s = slacks[a];
             slacks[a] = slacks[b];
             slacks[b] = s;
-        }
-    }
-
-    /**
-     * Mapa aberto {@code long → float} com contador de geração.
-     *
-     * <p>Escrito à mão em vez de {@code Long2FloatOpenHashMap} para que o núcleo não dependa de
-     * nada fora de {@code java.*} e se possa testar sem o Minecraft no classpath. O valor
-     * {@link Float#NaN} significa "chave ausente".
-     */
-    private static final class DistanceMap {
-
-        private long[] keys;
-        private float[] values;
-        private int[] stamps;
-        private int mask;
-        private int generation;
-        private int size;
-        private final int threshold;
-
-        DistanceMap(int expected) {
-            int capacity = tableSizeFor(expected);
-            keys = new long[capacity];
-            values = new float[capacity];
-            stamps = new int[capacity];
-            mask = capacity - 1;
-            threshold = capacity * 3 / 4;
-            generation = 1;
-        }
-
-        void nextGeneration() {
-            generation++;
-            if (generation == Integer.MAX_VALUE) {
-                Arrays.fill(stamps, 0);
-                generation = 1;
-            }
-            size = 0;
-        }
-
-        /**
-         * @return a energia guardada, ou {@link Float#NEGATIVE_INFINITY} se a chave não existe.
-         *         Nunca {@code NaN}: em Java qualquer comparação com {@code NaN} é {@code false}
-         *         e o Dijkstra deixava de funcionar.
-         */
-        float get(long key) {
-            int index = index(key);
-            return stamps[index] == generation ? values[index] : ABSENT;
-        }
-
-        void put(long key, float value) {
-            int index = index(key);
-            if (stamps[index] != generation) {
-                stamps[index] = generation;
-                size++;
-            }
-            keys[index] = key;
-            values[index] = value;
-            if (size > threshold) {
-                grow();
-            }
-        }
-
-        private int index(long key) {
-            int index = mix(key) & mask;
-            while (stamps[index] == generation && keys[index] != key) {
-                index = (index + 1) & mask;
-            }
-            return index;
-        }
-
-        private void grow() {
-            long[] oldKeys = keys;
-            float[] oldValues = values;
-            int[] oldStamps = stamps;
-            int oldGeneration = generation;
-
-            int capacity = keys.length << 1;
-            keys = new long[capacity];
-            values = new float[capacity];
-            stamps = new int[capacity];
-            mask = capacity - 1;
-            size = 0;
-            generation = oldGeneration + 1;
-
-            for (int i = 0; i < oldStamps.length; i++) {
-                if (oldStamps[i] == oldGeneration) {
-                    insert(oldKeys[i], oldValues[i]);
-                }
-            }
-        }
-
-        private void insert(long key, float value) {
-            int index = index(key);
-            stamps[index] = generation;
-            keys[index] = key;
-            values[index] = value;
-        }
-
-        private static int mix(long key) {
-            long h = key * 0x9E3779B97F4A7C15L;
-            h ^= h >>> 31;
-            h *= 0xBF58476D1CE4E5B9L;
-            h ^= h >>> 27;
-            return (int) h;
-        }
-
-        private static int tableSizeFor(int expected) {
-            int needed = Math.max(16, expected * 2);
-            int capacity = 16;
-            while (capacity < needed) {
-                capacity <<= 1;
-            }
-            return capacity;
-        }
-    }
-
-    /**
-     * Mapa aberto {@code long → float} para resistências, também com contador de geração.
-     *
-     * <p>Guarda {@link Float#NaN} como valor válido (ar) e {@link Float#POSITIVE_INFINITY}
-     * como "fora do mundo", por isso a ausência é marcada por {@link Float#NEGATIVE_INFINITY},
-     * que nunca é um valor guardável.
-     */
-    private static final class FloatMap {
-
-        private long[] keys;
-        private float[] values;
-        private int[] stamps;
-        private int mask;
-        private int generation;
-        private int size;
-
-        FloatMap(int expected) {
-            int capacity = tableSizeFor(expected);
-            keys = new long[capacity];
-            values = new float[capacity];
-            stamps = new int[capacity];
-            mask = capacity - 1;
-            generation = 1;
-        }
-
-        void nextGeneration() {
-            generation++;
-            if (generation == Integer.MAX_VALUE) {
-                Arrays.fill(stamps, 0);
-                generation = 1;
-            }
-            size = 0;
-        }
-
-        /** @return o valor guardado, ou {@link Float#NEGATIVE_INFINITY} se a chave não existe. */
-        float get(long key) {
-            int index = index(key);
-            return stamps[index] == generation ? values[index] : ABSENT;
-        }
-
-        /** @return {@code true} se a chave existir na geração atual. */
-        boolean contains(long key) {
-            return stamps[index(key)] == generation;
-        }
-
-        void put(long key, float value) {
-            int index = index(key);
-            if (stamps[index] == generation) {
-                values[index] = value;
-                return;
-            }
-            // Cresce antes de escrever: crescer depois deixaria esta chave marcada como
-            // ocupada com o conteúdo velho, e o rehash passá-la a nonsense.
-            if (size * 4 >= keys.length * 3) {
-                grow();
-                index = index(key);
-            }
-            stamps[index] = generation;
-            keys[index] = key;
-            values[index] = value;
-            size++;
-        }
-
-        private int index(long key) {
-            int index = mix(key) & mask;
-            while (stamps[index] == generation && keys[index] != key) {
-                index = (index + 1) & mask;
-            }
-            return index;
-        }
-
-        private void grow() {
-            long[] oldKeys = keys;
-            float[] oldValues = values;
-            int[] oldStamps = stamps;
-            int oldGeneration = generation;
-
-            int capacity = keys.length << 1;
-            keys = new long[capacity];
-            values = new float[capacity];
-            stamps = new int[capacity];
-            mask = capacity - 1;
-            size = 0;
-            // Uma geração diferente da antiga, senão as chaves reinseridas seriam vistas como
-            // pertencendo à geração antiga e portanto ausentes.
-            generation = oldGeneration + 1;
-
-            for (int i = 0; i < oldStamps.length; i++) {
-                if (oldStamps[i] == oldGeneration) {
-                    int index = index(oldKeys[i]);
-                    stamps[index] = generation;
-                    keys[index] = oldKeys[i];
-                    values[index] = oldValues[i];
-                }
-            }
-        }
-
-        private static int mix(long key) {
-            long h = key * 0x9E3779B97F4A7C15L;
-            h ^= h >>> 31;
-            h *= 0xBF58476D1CE4E5B9L;
-            h ^= h >>> 27;
-            return (int) h;
-        }
-
-        private static int tableSizeFor(int expected) {
-            int needed = Math.max(16, expected * 2);
-            int capacity = 16;
-            while (capacity < needed) {
-                capacity <<= 1;
-            }
-            return capacity;
         }
     }
 }
